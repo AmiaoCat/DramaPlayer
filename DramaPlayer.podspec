@@ -1,6 +1,6 @@
 Pod::Spec.new do |spec|
   spec.name = 'DramaPlayer'
-  spec.version = '0.1.0'
+  spec.version = '0.1.1'
   spec.summary = 'An AVFoundation playback SDK for single videos and vertical UIKit feeds.'
   spec.description = <<-DESC
     DramaPlayer provides playback sessions, bounded prepared-player reuse, source authorization

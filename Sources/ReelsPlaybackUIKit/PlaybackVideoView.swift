@@ -26,6 +26,7 @@ public struct URLPlaybackCoverLoader: PlaybackCoverLoader {
 @MainActor
 public final class PlaybackVideoView: UIView {
     private let cover = UIImageView()
+    private let loadingIndicator = UIActivityIndicatorView(style: .large)
     private let loader: any PlaybackCoverLoader
     private var coverWork: Task<Void, Never>?
     private var coverURL: URL?
@@ -42,6 +43,16 @@ public final class PlaybackVideoView: UIView {
         cover.clipsToBounds = true
         cover.isAccessibilityElement = false
         addSubview(cover)
+        loadingIndicator.color = .white
+        loadingIndicator.hidesWhenStopped = true
+        loadingIndicator.isUserInteractionEnabled = false
+        loadingIndicator.accessibilityLabel = String(localized: "Loading video")
+        loadingIndicator.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(loadingIndicator)
+        NSLayoutConstraint.activate([
+            loadingIndicator.centerXAnchor.constraint(equalTo: centerXAnchor),
+            loadingIndicator.centerYAnchor.constraint(equalTo: centerYAnchor)
+        ])
     }
 
     required init?(coder: NSCoder) { nil }
@@ -56,6 +67,11 @@ public final class PlaybackVideoView: UIView {
     }
 
     public func display(_ item: PlaybackItem?, presentation: PlaybackPresentation?) {
+        display(item, presentation: presentation, snapshot: nil)
+    }
+
+    /// Pass the session snapshot to show loading above the cover for the active item.
+    public func display(_ item: PlaybackItem?, presentation: PlaybackPresentation?, snapshot: PlaybackSnapshot?) {
         let changedItem = itemID != item?.id
         itemID = item?.id
         if changedItem || coverURL != item?.coverURL {
@@ -86,6 +102,15 @@ public final class PlaybackVideoView: UIView {
                     self.cover.alpha = 0
                 }
             }
+        }
+
+        let isLoading = item != nil && !hasRevealed && snapshot?.itemID == item?.id
+            && snapshot?.wantsPlayback == true
+            && (snapshot?.state == .preparing || snapshot?.state == .buffering)
+        if isLoading {
+            if !loadingIndicator.isAnimating { loadingIndicator.startAnimating() }
+        } else {
+            loadingIndicator.stopAnimating()
         }
     }
 

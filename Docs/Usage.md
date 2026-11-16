@@ -25,7 +25,7 @@ func makeFeed(urls: [String: URL], orderedIDs: [String], initialID: String?)
 }
 ```
 
-Use `session.select(id)` to jump to an episode. Use `setScrollingEnabled(false)` to disable paging while a host interaction requires it. For an existing collection view, use `PlaybackVideoView.display(_:presentation:)` with `session.presentation(for: id)`; mount a given presentation layer in only one view at a time.
+Use `session.select(id)` to jump to an episode. Use `setScrollingEnabled(false)` to disable paging while a host interaction requires it. For an existing collection view, call `PlaybackVideoView.display(_:presentation:snapshot:)` with `session.presentation(for: id)` and `session.snapshot` to show the loading indicator over the cover while the selected video prepares or buffers; mount a given presentation layer in only one view at a time.
 
 ## Controls and playback events
 

@@ -12,7 +12,7 @@ A Swift video playback SDK for UIKit apps that play a single video or a vertical
 | Play, pause, seek, scrub, rate and buffering progress | Async state, progress and completion events |
 | Shared playback focus, with at most one active session by default | Lifecycle handling and host-controlled suspension |
 | Bounded AVPlayer reuse and adjacent preloading | Source authorization and a pluggable media cache |
-| Poster-to-first-frame transition, with Reduce Motion support | Custom cover loaders and AVPlayerLayer presentation |
+| Poster-to-first-frame transition with a centered loading indicator | Custom cover loaders and AVPlayerLayer presentation |
 
 ## Run the demo
 
@@ -29,13 +29,13 @@ Use Xcode 15 or later, Swift 5.9 or later, and iOS 16 or later. The Core product
 
 ### Swift Package Manager
 
-In Xcode, choose **File → Add Package Dependencies**, enter `https://github.com/AmiaoCat/DramaPlayer.git`, and select **Up to Next Major Version** from `0.1.0`. Link `ReelsPlaybackCore` for a custom player, or link both `ReelsPlaybackCore` and `ReelsPlaybackUIKit` to use the built-in views.
+In Xcode, choose **File → Add Package Dependencies**, enter `https://github.com/AmiaoCat/DramaPlayer.git`, and select **Up to Next Major Version** from `0.1.1`. Link `ReelsPlaybackCore` for a custom player, or link both `ReelsPlaybackCore` and `ReelsPlaybackUIKit` to use the built-in views.
 
 For a Swift package manifest, add the following dependency and products to the target that uses them.
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/AmiaoCat/DramaPlayer.git", from: "0.1.0")
+    .package(url: "https://github.com/AmiaoCat/DramaPlayer.git", from: "0.1.1")
 ],
 targets: [
     .target(name: "MyApp", dependencies: [
@@ -52,7 +52,7 @@ Add this to your app's Podfile, run `pod install`, and open the generated `.xcwo
 ```ruby
 platform :ios, '16.0'
 target 'MyApp' do
-  pod 'DramaPlayer', :git => 'https://github.com/AmiaoCat/DramaPlayer.git', :tag => '0.1.0'
+  pod 'DramaPlayer', :git => 'https://github.com/AmiaoCat/DramaPlayer.git', :tag => '0.1.1'
 end
 ```
 

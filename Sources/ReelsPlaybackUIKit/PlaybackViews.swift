@@ -26,7 +26,8 @@ public final class SinglePlaybackView: UIView {
                 guard let self else { return }
                 let session = self.session
                 let item = session.items.first { $0.id == session.selectedID }
-                self.video.display(item, presentation: item.flatMap { session.presentation(for: $0.id) })
+                self.video.display(item, presentation: item.flatMap { session.presentation(for: $0.id) },
+                                   snapshot: session.snapshot)
             }
         }
     }
@@ -162,7 +163,7 @@ public final class VerticalPlaybackView: UIView, UICollectionViewDataSource, UIC
         guard itemIDs.indices.contains(index.item) else { return }
         let id = itemIDs[index.item]
         let item = session.items.first { $0.id == id }
-        cell.video?.display(item, presentation: session.presentation(for: id))
+        cell.video?.display(item, presentation: session.presentation(for: id), snapshot: session.snapshot)
     }
 
     deinit { events?.cancel() }

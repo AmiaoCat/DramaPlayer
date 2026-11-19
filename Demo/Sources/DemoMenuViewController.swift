@@ -19,6 +19,8 @@ final class DemoMenuViewController: UIViewController {
         quick.distribution = .fillEqually
 
         let tools = section("Playback tools", rows: [
+            row("Vertical feed lab", detail: "Inspect prepared-player reuse with film excerpts",
+                icon: "rectangle.portrait.on.rectangle.portrait") { [weak self] in self?.open(.feed) },
             row("Video layouts", detail: "12 templates and a resizable mini player", icon: "pip") { [weak self] in
                 self?.pushDemo(DemoTemplatesViewController(bundle: .main))
             },
@@ -36,7 +38,7 @@ final class DemoMenuViewController: UIViewController {
             row("Episode access", detail: "Unlock an episode and retry playback", icon: "lock.open") { [weak self] in
                 self?.open(.access)
             },
-            row("Remote playback", detail: "Play your HTTPS stream or Apple's HLS sample", icon: "antenna.radiowaves.left.and.right") { [weak self] in
+            row("Remote playback", detail: "Stream HLS or download an MP4 for offline playback", icon: "antenna.radiowaves.left.and.right") { [weak self] in
                 self?.promptForURL()
             }
         ])
@@ -109,9 +111,9 @@ final class DemoMenuViewController: UIViewController {
         artwork.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(artwork)
 
-        let title = DemoStyle.label("Vertical feed", style: .largeTitle, weight: .bold, color: .white)
+        let title = DemoStyle.label("Drama collection", style: .largeTitle, weight: .bold, color: .white)
         title.accessibilityTraits.insert(.header)
-        let description = DemoStyle.label("Swipe between episodes. See how prepared clips resume.", style: .subheadline,
+        let description = DemoStyle.label("12 vertical episodes from three open films.", style: .subheadline,
                                           weight: .medium, color: UIColor(white: 0.9, alpha: 1))
         let launch = UIButton(type: .system)
         DemoStyle.styleButton(launch, filled: true)
@@ -121,7 +123,9 @@ final class DemoMenuViewController: UIViewController {
         style?.imagePadding = 8
         launch.configuration = style
         launch.accessibilityIdentifier = "open-featured-feed"
-        launch.addAction(UIAction { [weak self] _ in self?.open(.feed) }, for: .touchUpInside)
+        launch.addAction(UIAction { [weak self] _ in
+            self?.pushDemo(DemoSeriesViewController(bundle: .main))
+        }, for: .touchUpInside)
 
         let text = UIStackView(arrangedSubviews: [title, description, launch])
         text.axis = .vertical
@@ -246,8 +250,12 @@ final class DemoMenuViewController: UIViewController {
             start?.isEnabled = Self.httpsURL(from: field?.text) != nil
         }, for: .editingChanged)
         alert.addAction(start)
-        alert.addAction(UIAlertAction(title: "Apple HLS sample", style: .default) { [weak self] _ in
-            guard let url = URL(string: "https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_16x9/bipbop_16x9_variant.m3u8") else { return }
+        alert.addAction(UIAlertAction(title: "Tears of Steel (HLS)", style: .default) { [weak self] _ in
+            guard let url = URL(string: "https://test-streams.mux.dev/tos_ismc/main.m3u8") else { return }
+            self?.open(.remote(url))
+        })
+        alert.addAction(UIAlertAction(title: "Sintel Trailer (MP4)", style: .default) { [weak self] _ in
+            guard let url = URL(string: "https://media.w3.org/2010/05/sintel/trailer.mp4") else { return }
             self?.open(.remote(url))
         })
         present(alert, animated: true)
@@ -313,8 +321,8 @@ private final class FeaturedArtworkView: UIView {
         super.init(frame: .zero)
         isUserInteractionEnabled = false
         accessibilityElementsHidden = true
-        let stills = ["01", "02", "03"].map { id in
-            let image = Bundle.main.url(forResource: id, withExtension: "jpg").flatMap { UIImage(contentsOfFile: $0.path) }
+        let stills = ["steel-01", "coffee-02", "charge-03"].map { id in
+            let image = DemoSeries.asset(id, "jpg").flatMap { UIImage(contentsOfFile: $0.path) }
             let view = UIImageView(image: image)
             view.contentMode = .scaleAspectFill
             view.clipsToBounds = true

@@ -32,17 +32,47 @@ DramaPlayer 面向 iOS 16+ 的 UIKit 项目，提供单视频播放和竖滑剧�
 
 | 场景 | 操作与预期结果 | 对应接口 |
 | --- | --- | --- |
+| Drama collection | 首页打开 12 集短剧流。上下滑或用 **Episodes** 选集，播完自动连播。重新进入会恢复上次集数和进度。片段是开放影片的竖屏改编，支持离线播放。 | `VerticalPlaybackView`、`select(_:)`、`resumePosition` · [素材署名](../Demo/Media/Series/ATTRIBUTION.md) |
 | Single video | 点击视频暂停，拖动进度条或切换倍速。片段播完后循环。 | `SinglePlaybackView`、`.loop` |
 | Cover loading | 从 **Cases** 切换封面慢、失败、缺失或首帧先到的情况，观察占位和封面状态。 | `PlaybackCoverState`、`onCoverStateChange` |
-| Landscape video | 横屏后在画面左侧上下滑调亮度，右侧上下滑调播放音量。内置样片静音，可用 Apple HLS 样片试听音量变化。 | `isLandscapeAdjustmentEnabled`、`setVolume(_:)` |
+| Landscape video | 横屏自动全屏，默认完整显示画面，可切换为裁切填满。点右上方的眼睛图标进入沉浸模式，只显示播放进度。轻点画面恢复控件。左右两侧上下滑可调亮度和音量。 | `scaling`、`showsProgressOnly`、`onVideoTap`、`isLandscapeAdjustmentEnabled` |
 | Video layouts | 横版和竖版样片可切换 12 套布局。打开 **Mini player** 后拖动顶部或右下角，也可在 **Custom size** 分别输入宽和高。 | `PlaybackLayoutTemplate.presets`、`PlaybackMiniPlayerView` |
 | Vertical feed | 上下滑动或点击 **Episodes** 跳集。播完自动进入下一集，末集播完停止。 | `VerticalPlaybackView`、`select(_:)`、`.preparedPlayer`、`.advance` |
 | Custom controls | 按 **Play** 从第 2 秒开始，按 **+5 seconds** 快进，播完按 **Replay**。 | `PlaybackVideoView`、`resumePosition`、`events()`、`seek(to:)` |
 | Episode access | 第 2 集显示 **Access required**。按 **Unlock episode** 后播放。返回菜单重新进入可再次体验锁定状态。 | `.requiresUserAction`、`retry()` |
-| Cache policies | 选 **Custom**，分别设置前后预取 0–2 集。等目标集显示 **Prefetched** 后选中它，查看 **Cache hit**。按 **Reset** 从第 1 集和空缓存重新开始。 | `PlaybackMediaPrefetchPolicy`、`PlaybackCacheAdapter` |
-| Remote playback | 输入直连 HTTPS 地址或选择 **Apple HLS sample**。查看首帧耗时，在 **Playback** 菜单切换省流偏好、音轨或字幕。失败后可点击 **Retry playback**。 | `diagnostics()`、`setStreamPreferences(_:)`、`mediaTrackGroup(for:)` |
+| Cache policies | 选 **Custom**，分别设置前后预取 0–2 集。等目标集显示 **Prefetched** 后选中它，查看 **Cache hit**。按 **Clear cache** 从源文件播放当前集并关闭预取。 | `PlaybackMediaPrefetchPolicy`、`PlaybackCacheAdapter` |
+| Remote playback | 输入直连 HTTPS 地址，或选择 **Tears of Steel (HLS)**、**Sintel Trailer (MP4)**。打开 MP4 后用 **Download video** 保存供离线播放，点击 **Delete local copy** 删除本地副本。 | `diagnostics()`、`PlaybackDownloadStore` |
 
 ## 接入业务数据
+
+### 横屏全屏与沉浸播放
+
+由宿主启用横屏，在横屏布局中将现有播放器约束到容器的四边。播放器内置控制条会避开安全区。保留同一个 `PlaybackSession` 和播放器视图，横竖屏切换时只更新布局和 `scaling`。用 `.fit` 完整显示画面，或用 `.fill` 裁切填满。
+
+```swift
+player.showsProgressOnly = true
+player.onVideoTap = { [weak player] in
+    player?.showsProgressOnly = false
+    player?.onVideoTap = nil
+}
+```
+
+这段写法适用于启用了内置控件的 `SinglePlaybackView` 和 `VerticalPlaybackView`。自定义界面可以直接使用 `PlaybackControlsView.showsProgressOnly`。
+
+### HTTPS MP4 下载
+
+给 `PlaybackDownloadStore` 传入当前账号专用的 Application Support 子目录，并作为 `PlaybackSession` 的 `cache` 参数。播放和下载复用同一个已经通过业务鉴权的 `PlaybackSource`。为 `cacheKey` 使用包含剧集 ID、清晰度和内容版本的稳定标识，便于签名 URL 刷新后复用本地视频。
+
+```swift
+let downloads = PlaybackDownloadStore(directory: accountDownloadsDirectory)
+let session = PlaybackSession(sourceProvider: sourceProvider, cache: downloads)
+
+try await downloads.download(authorizedMP4Source)
+let localURL = await downloads.localURL(for: authorizedMP4Source)
+try await downloads.deleteDownload(for: authorizedMP4Source)
+```
+
+播放会优先使用已完成的本地副本。下载或删除后需要立即切换来源时，可调用 `session.retry()` 重新加载当前剧集。下载适用于可直接访问的 HTTPS MP4，HLS 示例保留在线播放。账号切换、内容过期和离线授权由宿主应用管理。
 
 - **进度和完播**：通过 `session.events()` 读取 `.snapshot` 和 `.ended(id)`。进度单位是秒。按剧集 ID 保存退出时的进度，下次构建 `PlaybackItem` 时传入 `resumePosition`。订阅任务随页面释放取消。
 - **鉴权和重试**：在 resolver 中查询播放权限，两种请求用途 `.playback` 和 `.preload` 都要验证。拦截时返回 `.requiresUserAction`，由宿主显示解锁界面。授权成功后确认用户仍停留在原剧集，再调用 `retry()`。账号或权限范围变化时使用 `invalidateSources()` 清理已解析的地址和已准备的画面。

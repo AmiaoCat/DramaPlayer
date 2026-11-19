@@ -30,9 +30,11 @@ final class DemoTemplatesViewController: UIViewController {
     private var usesSidePanel = false
 
     init?(bundle: Bundle) {
-        guard let portrait = bundle.url(forResource: "01", withExtension: "mp4"),
-              let landscape = bundle.url(forResource: "04", withExtension: "mp4") else { return nil }
-        let urls = ["01": portrait, "04": landscape]
+        let portraitID = "charge-02"
+        let landscapeID = DemoSeries.landscapeID
+        guard let portrait = DemoSeries.asset(portraitID, "mp4", bundle: bundle),
+              let landscape = DemoSeries.asset(landscapeID, "mp4", bundle: bundle) else { return nil }
+        let urls = [portraitID: portrait, landscapeID: landscape]
         let sources = PlaybackSourceResolver { item, _ in
             guard let url = urls[item.id] else { return .unavailable }
             return .allowed(.init(url: url, cacheKey: item.id))
@@ -42,8 +44,8 @@ final class DemoTemplatesViewController: UIViewController {
         lifecycle = PlaybackLifecycle(session: session)
         player = SinglePlaybackView(session: session, showsControls: false, scaling: .fit)
         super.init(nibName: nil, bundle: nil)
-        session.setItems(["01", "04"].map {
-            PlaybackItem(id: $0, coverURL: bundle.url(forResource: $0, withExtension: "jpg"))
+        session.setItems([portraitID, landscapeID].map {
+            PlaybackItem(id: $0, coverURL: DemoSeries.asset($0, "jpg", bundle: bundle))
         })
     }
 

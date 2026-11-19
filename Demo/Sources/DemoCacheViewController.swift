@@ -54,19 +54,20 @@ final class DemoCacheViewController: UIViewController {
     private var lifecycle: PlaybackLifecycle?
     private var playbackEvents: Task<Void, Never>?
     private var cacheEvents: Task<Void, Never>?
+    private var mediaCache: DemoMediaCache?
     private var routes: [String: String] = [:]
     private var isVisible = false
     private let workspace = UIStackView()
     private var controlsWidth: NSLayoutConstraint?
 
     init?(bundle: Bundle) {
-        let ids = ["01", "02", "03"]
+        let ids = DemoSeries.labEpisodeIDs
         let movies = ids.compactMap { id in
-            bundle.url(forResource: id, withExtension: "mp4").map { (id, $0) }
+            DemoSeries.asset(id, "mp4", bundle: bundle).map { (id, $0) }
         }
         guard movies.count == ids.count else { return nil }
         let urls = Dictionary(uniqueKeysWithValues: movies)
-        items = ids.map { PlaybackItem(id: $0, coverURL: bundle.url(forResource: $0, withExtension: "jpg")) }
+        items = ids.map { PlaybackItem(id: $0, coverURL: DemoSeries.asset($0, "jpg", bundle: bundle)) }
         sourceProvider = PlaybackSourceResolver { item, _ in
             guard let url = urls[item.id] else { return .unavailable }
             return .allowed(.init(url: url, cacheKey: item.id))
@@ -88,9 +89,14 @@ final class DemoCacheViewController: UIViewController {
             guard let self, items.indices.contains(episodes.selectedSegmentIndex) else { return }
             session?.select(items[episodes.selectedSegmentIndex].id)
         }, for: .valueChanged)
-        navigationItem.rightBarButtonItem = UIBarButtonItem(title: "Reset", primaryAction: UIAction { [weak self] _ in
+        let reset = UIBarButtonItem(image: UIImage(systemName: "arrow.counterclockwise"), primaryAction: UIAction { [weak self] _ in
             self?.startRun()
         })
+        reset.accessibilityLabel = "Reset"
+        let clear = UIBarButtonItem(title: "Clear cache", primaryAction: UIAction { [weak self] _ in
+            self?.clearCache()
+        })
+        navigationItem.rightBarButtonItems = [clear, reset]
 
         instructions.font = .preferredFont(forTextStyle: .footnote)
         instructions.adjustsFontForContentSizeCategory = true
@@ -202,7 +208,24 @@ final class DemoCacheViewController: UIViewController {
         session?.deactivate()
     }
 
-    private func startRun() {
+    private func clearCache() {
+        guard let previous = mediaCache else { return }
+        let selectedID = session?.selectedID
+        policies.selectedSegmentIndex = Policy.disabled.rawValue
+        startRun(selectedID: selectedID)
+        Task { [weak self] in
+            do {
+                try await previous.clear()
+                guard let self, policies.selectedSegmentIndex == Policy.disabled.rawValue else { return }
+                instructions.text = "Cache cleared. Choose another policy to enable prefetch again."
+            } catch {
+                guard let self, policies.selectedSegmentIndex == Policy.disabled.rawValue else { return }
+                instructions.text = "Couldn’t clear the cache. Try again."
+            }
+        }
+    }
+
+    private func startRun(selectedID: String? = nil) {
         guard let policy = Policy(rawValue: policies.selectedSegmentIndex) else { return }
         playbackEvents?.cancel()
         cacheEvents?.cancel()
@@ -212,11 +235,12 @@ final class DemoCacheViewController: UIViewController {
         routes.removeAll()
         instructions.text = policy.instructions
         customControls.isHidden = policy != .custom
-        episodes.selectedSegmentIndex = 0
+        episodes.selectedSegmentIndex = items.firstIndex { $0.id == selectedID } ?? 0
 
         // Reset and mode switches start fresh. Editing a custom plan keeps the current session.
         let (activityStream, continuation) = AsyncStream<DemoMediaCache.Activity>.makeStream()
         let store = DemoMediaCache(activity: continuation)
+        mediaCache = store
         let cache = PlaybackCacheAdapter(
             resolve: { await store.media(for: $0) },
             prefetch: { try await store.prefetch($0) },
@@ -231,7 +255,7 @@ final class DemoCacheViewController: UIViewController {
         self.session = session
         lifecycle = PlaybackLifecycle(session: session)
         if policy == .custom { session.setMediaPrefetchPolicy(customPolicy) }
-        session.setItems(items)
+        session.setItems(items, selectedID: selectedID)
 
         // Keep vertical-mode preloading while choosing episodes explicitly from the host UI.
         let player = SinglePlaybackView(session: session, scaling: .fit)
@@ -267,12 +291,12 @@ final class DemoCacheViewController: UIViewController {
     }
 
     private func renderActivity() {
-        let text = items.map { item in
+        let text = items.enumerated().map { index, item in
             var details = [routes[item.id] ?? "Not requested"]
             if let presentation = session?.presentation(for: item.id) {
                 details.append(presentation.firstFrameReady ? "Frame ready" : "Player attached")
             }
-            return "Episode \(item.id) · " + details.joined(separator: " · ")
+            return "Episode \(index + 1) · " + details.joined(separator: " · ")
         }.joined(separator: "\n")
         if activity.text != text { activity.text = text }
     }
@@ -293,6 +317,7 @@ private actor DemoMediaCache {
     private let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
     private let activity: AsyncStream<Activity>.Continuation
     private var files: [String: URL] = [:]
+    private var closed = false
 
     init(activity: AsyncStream<Activity>.Continuation) {
         self.activity = activity
@@ -309,6 +334,7 @@ private actor DemoMediaCache {
 
     func prefetch(_ source: PlaybackSource) throws {
         try Task.checkCancellation()
+        guard !closed else { throw CancellationError() }
         if let url = files[source.cacheKey], FileManager.default.isReadableFile(atPath: url.path) { return }
         let destination = directory.appendingPathComponent(UUID().uuidString).appendingPathExtension("mp4")
         let manager = FileManager.default
@@ -330,6 +356,16 @@ private actor DemoMediaCache {
             try? FileManager.default.removeItem(at: file)
         }
         report("Cache invalidated", for: source)
+    }
+
+    func clear() throws {
+        closed = true
+        do {
+            try FileManager.default.removeItem(at: directory)
+        } catch let error as CocoaError where error.code == .fileNoSuchFile {
+            // The current policy may never have written a cache file.
+        }
+        files.removeAll()
     }
 
     private func report(_ description: String, for source: PlaybackSource) {

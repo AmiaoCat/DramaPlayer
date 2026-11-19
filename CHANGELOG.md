@@ -14,7 +14,14 @@
 - Add opt-in landscape swipes for display brightness and session audio level.
 - Track poster requests independently of video startup, cancel stale work, and show a fallback when artwork is unavailable.
 - Refresh the demo with grouped scenarios, an artwork-led home screen, and an adaptive playback inspector.
-- Preserve the 0.1.1 imports, initializer signatures and default UIKit scaling. Hosts opt in to fit, load deadlines and logging. The demo opts in to these features for testing.
+
+### Drama collection, full screen, and offline downloads
+
+- Add a 12-episode offline demo using excerpts from three open films, each with its own poster. The feed supports episode selection, auto-advance, and resuming the last episode and position.
+- Use film excerpts in the playback labs, including a widescreen clip with its original audio. Remote playback offers Tears of Steel on Mux HLS and the Sintel trailer as an HTTPS MP4. [Media credits and licenses](Demo/Media/Series/ATTRIBUTION.md)
+- Enter full screen automatically in landscape and choose between fitting and filling the screen. Immersive mode shows only the progress bar. Tapping the video restores controls without toggling playback.
+- Clear temporary prefetch files from the cache lab. The opt-in `PlaybackDownloadStore` manages persistent HTTPS MP4 downloads and deletion separately. The HLS example remains available for streaming.
+- Keep the `0.1.1` package imports, initializer signatures, and default UIKit behavior. Existing integrations can opt in to `showsProgressOnly`, `onVideoTap`, and the download store. [Chinese integration guide](Docs/Quickstart.zh-CN.md)
 
 ## 0.1.1
 

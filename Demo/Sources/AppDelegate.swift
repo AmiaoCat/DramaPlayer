@@ -32,7 +32,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options: UIScene.ConnectionOptions) {
         guard let scene = scene as? UIWindowScene else { return }
         let window = UIWindow(windowScene: scene)
-        let navigation = UINavigationController(rootViewController: DemoMenuViewController())
+        let navigation = DemoNavigationController(rootViewController: DemoMenuViewController())
         let appearance = UINavigationBarAppearance()
         appearance.configureWithOpaqueBackground()
         appearance.backgroundColor = DemoStyle.canvas
@@ -47,4 +47,8 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         self.window = window
         window.makeKeyAndVisible()
     }
+}
+
+private final class DemoNavigationController: UINavigationController {
+    override var childForStatusBarHidden: UIViewController? { topViewController }
 }

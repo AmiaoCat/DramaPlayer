@@ -51,6 +51,13 @@ final class DemoPlayerViewController: UIViewController {
     private let mode: Mode
     private let session: PlaybackSession
     private let lifecycle: PlaybackLifecycle
+    private static let downloads = PlaybackDownloadStore(directory: URL.applicationSupportDirectory
+        .appendingPathComponent("DramaPlayerDownloads", isDirectory: true))
+    private let downloadSource: PlaybackSource?
+    private let downloadButton = UIButton(type: .system)
+    private let downloadStatus = DemoStyle.label(style: .caption1, color: DemoStyle.secondary)
+    private var downloadTask: Task<Void, Never>?
+    private var hasDownload = false
     private let access: DemoEpisodeAccess
     private let status = UILabel()
     private let playbackDetail = DemoStyle.label(style: .caption1, color: DemoStyle.secondary)
@@ -67,40 +74,48 @@ final class DemoPlayerViewController: UIViewController {
     private var customLandscapeGestures: PlaybackLandscapeGestures?
     private let help = UILabel()
     private let workspace = UIStackView()
-    private var inspectorWidth: NSLayoutConstraint?
-    private var landscapeStageHeight: NSLayoutConstraint?
+    private var fullscreenLayout: DemoFullscreenLayout?
+    private lazy var immersiveTap = UITapGestureRecognizer(target: self, action: #selector(exitImmersivePlayback))
+
+    override var prefersStatusBarHidden: Bool { fullscreenLayout?.isFullscreen ?? false }
 
     init?(mode: Mode) {
         self.mode = mode
 
         let items: [PlaybackItem]
         let urls: [String: URL]
+        let downloadable: PlaybackSource?
         if case .remote(let url) = mode {
             items = [PlaybackItem(id: "remote")]
             urls = ["remote": url]
+            downloadable = PlaybackDownloadStore.supports(url) ? .init(url: url, cacheKey: url.absoluteString) : nil
         } else if mode == .cover {
-            guard let video = Bundle.main.url(forResource: "01", withExtension: "mp4") else { return nil }
+            downloadable = nil
+            guard let video = DemoSeries.asset("coffee-01", "mp4"),
+                  let fastVideo = DemoSeries.asset("coffee-03", "mp4") else { return nil }
             items = [
-                .init(id: "slow", coverURL: Bundle.main.url(forResource: "01", withExtension: "jpg")),
+                .init(id: "slow", coverURL: DemoSeries.asset("coffee-01", "jpg")),
                 .init(id: "failed", coverURL: video.deletingLastPathComponent().appendingPathComponent("unavailable.jpg")),
                 .init(id: "no-cover"),
-                .init(id: "frame-first", coverURL: Bundle.main.url(forResource: "03", withExtension: "jpg"))
+                .init(id: "frame-first", coverURL: DemoSeries.asset("coffee-03", "jpg"))
             ]
-            urls = Dictionary(uniqueKeysWithValues: items.map { ($0.id, video) })
+            urls = ["slow": video, "failed": video, "no-cover": video, "frame-first": fastVideo]
         } else {
-            let ids = mode.isVertical ? ["01", "02", "03"] : [mode == .landscape ? "04" : "01"]
+            downloadable = nil
+            let ids = mode.isVertical ? DemoSeries.labEpisodeIDs : [mode == .landscape ? DemoSeries.landscapeID : "coffee-02"]
             let movies = ids.compactMap { id in
-                Bundle.main.url(forResource: id, withExtension: "mp4").map { (id, $0) }
+                DemoSeries.asset(id, "mp4").map { (id, $0) }
             }
             guard movies.count == ids.count else { return nil }
             urls = Dictionary(uniqueKeysWithValues: movies)
             items = ids.map { id in
-                PlaybackItem(id: id, coverURL: Bundle.main.url(forResource: id, withExtension: "jpg"),
+                PlaybackItem(id: id, coverURL: DemoSeries.asset(id, "jpg"),
                              resumePosition: mode == .custom ? 2 : 0)
             }
         }
 
-        let access = DemoEpisodeAccess(lockedID: mode == .access ? "02" : nil)
+        let lockedID = mode == .access ? items.dropFirst().first?.id : nil
+        let access = DemoEpisodeAccess(lockedID: lockedID)
         self.access = access
         let isCoverDemo = mode == .cover
         let resolver = PlaybackSourceResolver { item, _ in
@@ -110,12 +125,15 @@ final class DemoPlayerViewController: UIViewController {
             if isCoverDemo, item.id != "frame-first" {
                 try await Task.sleep(for: .seconds(4))
             }
-            return .allowed(.init(url: url, cacheKey: "demo/\(item.id)"))
+            return .allowed(downloadable ?? .init(url: url, cacheKey: "demo/\(item.id)"))
         }
-        session = PlaybackSession(configuration: mode.configuration, sourceProvider: resolver, logger: DemoLogging.logger)
+        downloadSource = downloadable
+        let cache: any PlaybackMediaCache = downloadable == nil ? DirectPlaybackMediaCache() : Self.downloads
+        session = PlaybackSession(configuration: mode.configuration, sourceProvider: resolver, cache: cache,
+                                  logger: DemoLogging.logger)
         lifecycle = PlaybackLifecycle(session: session)
         super.init(nibName: nil, bundle: nil)
-        session.setItems(items, selectedID: mode == .access ? "02" : nil)
+        session.setItems(items, selectedID: lockedID)
     }
 
     required init?(coder: NSCoder) { nil }
@@ -167,6 +185,14 @@ final class DemoPlayerViewController: UIViewController {
             arrangedViews.insert(diagnostics, at: 2)
             observeDiagnostics(in: diagnostics)
             installStreamingMenu()
+            if let source = downloadSource {
+                DemoStyle.styleButton(downloadButton)
+                downloadButton.accessibilityIdentifier = "download-action"
+                downloadStatus.accessibilityIdentifier = "download-status"
+                downloadButton.addAction(UIAction { [weak self] _ in self?.manageDownload(source) }, for: .touchUpInside)
+                arrangedViews.append(contentsOf: [downloadStatus, downloadButton])
+                refreshDownload(source)
+            }
         }
 
         let inspector = DemoStyle.panel(arrangedViews, spacing: 5, inset: 12)
@@ -174,25 +200,50 @@ final class DemoPlayerViewController: UIViewController {
         DemoStyle.styleSurface(stage, radius: 20, color: .black)
         player.translatesAutoresizingMaskIntoConstraints = false
         stage.addSubview(player)
-        workspace.addArrangedSubview(stage)
-        workspace.addArrangedSubview(inspector)
-        workspace.axis = .vertical
-        workspace.spacing = 10
-        workspace.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(workspace)
-        let safeArea = view.safeAreaLayoutGuide
-        inspectorWidth = inspector.widthAnchor.constraint(equalToConstant: 240)
-        landscapeStageHeight = stage.heightAnchor.constraint(equalTo: workspace.heightAnchor)
         NSLayoutConstraint.activate([
-            workspace.topAnchor.constraint(equalTo: safeArea.topAnchor, constant: 4),
-            workspace.leadingAnchor.constraint(equalTo: safeArea.leadingAnchor, constant: 12),
-            workspace.trailingAnchor.constraint(equalTo: safeArea.trailingAnchor, constant: -12),
-            workspace.bottomAnchor.constraint(equalTo: safeArea.bottomAnchor, constant: -6),
             player.topAnchor.constraint(equalTo: stage.topAnchor),
             player.leadingAnchor.constraint(equalTo: stage.leadingAnchor),
             player.trailingAnchor.constraint(equalTo: stage.trailingAnchor),
             player.bottomAnchor.constraint(equalTo: stage.bottomAnchor)
         ])
+        let customAction = mode == .custom ? UIAction(title: "Play or pause") { [weak session] _ in
+            session?.togglePlayback()
+        } : nil
+        let customProgress = mode == .custom ? PlaybackControlsView(session: session) : nil
+        if let customProgress {
+            customProgress.showsProgressOnly = true
+            customProgress.isHidden = true
+            customProgress.translatesAutoresizingMaskIntoConstraints = false
+            stage.addSubview(customProgress)
+            NSLayoutConstraint.activate([
+                customProgress.leadingAnchor.constraint(equalTo: stage.safeAreaLayoutGuide.leadingAnchor, constant: 12),
+                customProgress.trailingAnchor.constraint(equalTo: stage.safeAreaLayoutGuide.trailingAnchor, constant: -12),
+                customProgress.bottomAnchor.constraint(equalTo: stage.safeAreaLayoutGuide.bottomAnchor, constant: -12)
+            ])
+            immersiveTap.isEnabled = false
+            player.addGestureRecognizer(immersiveTap)
+        }
+        fullscreenLayout = DemoFullscreenLayout(controller: self, workspace: workspace, stage: stage, details: inspector,
+                                                extraAction: customAction, onScalingChange: { [weak player] fill in
+            let scaling: PlaybackVideoScaling = fill ? .fill : .fit
+            (player as? SinglePlaybackView)?.scaling = scaling
+            (player as? VerticalPlaybackView)?.scaling = scaling
+            (player as? PlaybackVideoView)?.scaling = scaling
+        }, onImmersionChange: { [weak self, weak player, weak customProgress] immersive in
+            let reveal: (() -> Void)? = immersive ? { [weak self] in self?.exitImmersivePlayback() } : nil
+            if let single = player as? SinglePlaybackView {
+                single.showsProgressOnly = immersive
+                single.onVideoTap = reveal
+            }
+            if let feed = player as? VerticalPlaybackView {
+                feed.showsProgressOnly = immersive
+                feed.onVideoTap = reveal
+            }
+            if let customProgress {
+                customProgress.isHidden = !immersive
+                self?.immersiveTap.isEnabled = immersive
+            }
+        })
 
         render(session.snapshot)
         let stream = session.events()
@@ -238,25 +289,28 @@ final class DemoPlayerViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        fullscreenLayout?.update()
         let guidance = mode.isVertical ? "Swipe left/right sides vertically to adjust · Center to page"
             : "Slide up or down · Left for brightness · Right for volume"
         let helpText = view.bounds.width > view.bounds.height ? guidance : mode.help
         if help.text != helpText { help.text = helpText }
-        let safeSize = view.safeAreaLayoutGuide.layoutFrame.size
-        let wide = safeSize.width > safeSize.height && safeSize.width >= 590
-        let axis: NSLayoutConstraint.Axis = wide ? .horizontal : .vertical
-        if workspace.axis != axis {
-            inspectorWidth?.isActive = false
-            landscapeStageHeight?.isActive = false
-            workspace.axis = axis
-            workspace.alignment = wide ? .top : .fill
-            inspectorWidth?.isActive = wide
-            landscapeStageHeight?.isActive = wide
+        if fullscreenLayout?.isFullscreen == false, let feed = feedView {
+            let portrait = view.bounds.width / max(1, view.bounds.height) <= 0.7
+            feed.scaling = portrait ? .fill : .fit
         }
-        if let feed = feedView, feed.bounds.height > 0 {
-            // Keep portrait material intact in wide windows, including the unfolded display.
-            feed.scaling = feed.bounds.width / feed.bounds.height > 0.7 ? .fit : .fill
-        }
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        fullscreenLayout?.update()
+    }
+
+    @objc private func exitImmersivePlayback() {
+        fullscreenLayout?.exitImmersive()
+    }
+
+    override func accessibilityPerformEscape() -> Bool {
+        fullscreenLayout?.exitImmersive() == true || super.accessibilityPerformEscape()
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -300,6 +354,56 @@ final class DemoPlayerViewController: UIViewController {
         label.textAlignment = .natural
         label.numberOfLines = 0
         label.setContentCompressionResistancePriority(.required, for: .vertical)
+    }
+
+    private func refreshDownload(_ source: PlaybackSource) {
+        downloadButton.isEnabled = false
+        downloadTask = Task { [weak self] in
+            let file = await Self.downloads.localURL(for: source)
+            guard !Task.isCancelled, let self else { return }
+            renderDownload(available: file != nil)
+        }
+    }
+
+    private func renderDownload(available: Bool, message: String? = nil) {
+        hasDownload = available
+        downloadStatus.text = message ?? (available ? "Available offline" : "Streaming online")
+        downloadButton.setTitle(available ? "Delete local copy" : "Download video", for: .normal)
+        downloadButton.isEnabled = true
+    }
+
+    private func manageDownload(_ source: PlaybackSource) {
+        if hasDownload {
+            let alert = UIAlertController(title: "Delete downloaded video?",
+                                          message: "The video will play from the network again.", preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+            alert.addAction(UIAlertAction(title: "Delete", style: .destructive) { [weak self] _ in
+                self?.changeDownload(source, deleting: true)
+            })
+            present(alert, animated: true)
+        } else {
+            changeDownload(source, deleting: false)
+        }
+    }
+
+    private func changeDownload(_ source: PlaybackSource, deleting: Bool) {
+        downloadButton.isEnabled = false
+        downloadStatus.text = deleting ? "Removing local copy…" : "Downloading video…"
+        downloadTask = Task { [weak self] in
+            do {
+                if deleting { try await Self.downloads.deleteDownload(for: source) }
+                else { try await Self.downloads.download(source) }
+                guard !Task.isCancelled, let self else { return }
+                renderDownload(available: !deleting)
+                // Keep the playhead when switching between remote and local media.
+                let item = PlaybackItem(id: "remote", resumePosition: session.snapshot.position)
+                if session.items.first == item { session.retry() }
+                else { session.setItems([item]) }
+            } catch {
+                guard !Task.isCancelled, let self else { return }
+                renderDownload(available: deleting, message: deleting ? "Couldn’t delete the local copy." : "Download failed. Try again.")
+            }
+        }
     }
 
     private func installStreamingMenu() {
@@ -440,12 +544,13 @@ final class DemoPlayerViewController: UIViewController {
     deinit {
         observations?.cancel()
         diagnosticObservations?.cancel()
+        downloadTask?.cancel()
     }
 }
 
 private struct DemoCoverLoader: PlaybackCoverLoader {
     func image(for url: URL) async -> UIImage? {
-        let delay: Duration = url.lastPathComponent == "03.jpg" ? .seconds(6) : .seconds(1)
+        let delay: Duration = url.lastPathComponent == "coffee-03.jpg" ? .seconds(6) : .seconds(1)
         do { try await Task.sleep(for: delay) }
         catch { return nil }
         return await URLPlaybackCoverLoader().image(for: url)

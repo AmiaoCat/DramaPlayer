@@ -8,10 +8,20 @@ import UIKit
 public final class SinglePlaybackView: UIView {
     private let session: PlaybackSession
     private let video: PlaybackVideoView
+    private var controls: PlaybackControlsView?
     private var events: Task<Void, Never>?
     private var landscapeGestures: PlaybackLandscapeGestures?
 
     public var coverState: PlaybackCoverState { video.coverState }
+
+    /// Applies to the built-in controls if the view was created with controls enabled.
+    public var showsProgressOnly: Bool {
+        get { controls?.showsProgressOnly ?? false }
+        set { controls?.showsProgressOnly = newValue }
+    }
+
+    /// Replaces the default play/pause behavior for video surface taps.
+    public var onVideoTap: (() -> Void)?
 
     public var onCoverStateChange: ((PlaybackCoverState) -> Void)? {
         get { video.onCoverStateChange }
@@ -48,7 +58,11 @@ public final class SinglePlaybackView: UIView {
         video.frame = bounds
         video.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         video.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(togglePlayback)))
-        if showsControls { installControls(PlaybackControlsView(session: session), in: self) }
+        if showsControls {
+            let controls = PlaybackControlsView(session: session)
+            self.controls = controls
+            installControls(controls, in: self)
+        }
         let stream = session.events()
         events = Task { [weak self] in
             for await _ in stream {
@@ -63,7 +77,9 @@ public final class SinglePlaybackView: UIView {
 
     required init?(coder: NSCoder) { nil }
 
-    @objc private func togglePlayback() { session.togglePlayback() }
+    @objc private func togglePlayback() {
+        if let onVideoTap { onVideoTap() } else { session.togglePlayback() }
+    }
 
     deinit { events?.cancel() }
 }
@@ -73,10 +89,20 @@ public final class VerticalPlaybackView: UIView, UICollectionViewDataSource, UIC
     private let session: PlaybackSession
     private let loader: any PlaybackCoverLoader
     private let collection: UICollectionView
+    private var controls: PlaybackControlsView?
     private var events: Task<Void, Never>?
     private var itemIDs: [String] = []
     private var lastSize: CGSize = .zero
     private var landscapeGestures: PlaybackLandscapeGestures?
+
+    /// Applies to the built-in controls if the view was created with controls enabled.
+    public var showsProgressOnly: Bool {
+        get { controls?.showsProgressOnly ?? false }
+        set { controls?.showsProgressOnly = newValue }
+    }
+
+    /// Replaces the default play/pause behavior for taps on the selected page.
+    public var onVideoTap: (() -> Void)?
 
     /// The central fifth of the feed remains available for vertical paging.
     public var isLandscapeAdjustmentEnabled: Bool {
@@ -121,7 +147,11 @@ public final class VerticalPlaybackView: UIView, UICollectionViewDataSource, UIC
         collection.contentInsetAdjustmentBehavior = .never
         collection.register(Page.self, forCellWithReuseIdentifier: Page.reuseID)
         addSubview(collection)
-        if showsControls { installControls(PlaybackControlsView(session: session), in: self) }
+        if showsControls {
+            let controls = PlaybackControlsView(session: session)
+            self.controls = controls
+            installControls(controls, in: self)
+        }
         itemIDs = session.items.map(\.id)
         let stream = session.events()
         events = Task { [weak self] in
@@ -175,7 +205,7 @@ public final class VerticalPlaybackView: UIView, UICollectionViewDataSource, UIC
 
     public func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         guard itemIDs.indices.contains(indexPath.item), itemIDs[indexPath.item] == session.selectedID else { return }
-        session.togglePlayback()
+        if let onVideoTap { onVideoTap() } else { session.togglePlayback() }
     }
 
     public func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {

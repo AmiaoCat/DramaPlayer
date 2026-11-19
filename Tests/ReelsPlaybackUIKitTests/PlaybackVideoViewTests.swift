@@ -7,6 +7,29 @@ import XCTest
 
 final class PlaybackVideoViewTests: XCTestCase {
     @MainActor
+    func testImmersiveControlsOnlyShowThePlaybackProgress() throws {
+        let session = PlaybackSession(sourceProvider: PlaybackSourceResolver { _, _ in .unavailable })
+        let players: [UIView] = [SinglePlaybackView(session: session), VerticalPlaybackView(session: session)]
+        for player in players {
+            let controls = try XCTUnwrap(player.subviews.compactMap { $0 as? PlaybackControlsView }.first)
+            let standard = try XCTUnwrap(controls.subviews.compactMap { $0 as? UIStackView }.first)
+            let progress = try XCTUnwrap(controls.subviews.compactMap { $0 as? UIProgressView }.first)
+            XCTAssertFalse(standard.isHidden)
+            XCTAssertTrue(progress.isHidden)
+
+            (player as? SinglePlaybackView)?.showsProgressOnly = true
+            (player as? VerticalPlaybackView)?.showsProgressOnly = true
+            XCTAssertTrue(standard.isHidden)
+            XCTAssertFalse(progress.isHidden)
+            XCTAssertEqual(controls.backgroundColor, .clear)
+
+            controls.showsProgressOnly = false
+            XCTAssertFalse(standard.isHidden)
+            XCTAssertTrue(progress.isHidden)
+        }
+    }
+
+    @MainActor
     func testCoverFailureDoesNotPollOrBlockVideoAndCanRetryIndependently() async throws {
         let loader = CoverLoaderStub()
         let view = PlaybackVideoView(coverLoader: loader)

@@ -19,23 +19,24 @@ A Swift video playback SDK for UIKit apps that play a single video or a vertical
 
 ## Run the demo
 
-Open [Demo/DramaPlayerDemo.xcodeproj](Demo/DramaPlayerDemo.xcodeproj) in Xcode, select the **DramaPlayerDemo** scheme and run on an iPhone simulator. The project links the local Swift package and includes four silent clips and matching posters. The bundled-media examples work offline.
+Open [Demo/DramaPlayerDemo.xcodeproj](Demo/DramaPlayerDemo.xcodeproj) in Xcode, select **DramaPlayerDemo** and run on an iPhone simulator. The featured drama collection bundles 12 vertical excerpts across three open films with a poster for every episode. The playback labs use these film excerpts and a widescreen cut of Charge. See [media credits and licenses](Demo/Media/Series/ATTRIBUTION.md).
 
 | Demo | Try it |
 | --- | --- |
+| **Drama collection** | Open the featured feed, swipe or auto-advance through 12 episodes, and jump between three stories from the episode picker. Unmute to hear the audio where available. Reopen to resume the last episode. |
 | **Single video** | Tap to pause, drag the timeline to seek, change speed, and let the clip loop. |
 | **Cover loading** | Compare slow, failed and missing posters, and a video that reaches its first frame before the poster loads. |
-| **Landscape video** | Play a bundled 16:9 clip and rotate while it plays. Swipe vertically on the left for brightness or on the right for playback volume. Try the Apple HLS sample to hear the volume change. |
+| **Landscape video** | Rotate to go full screen. Switch between fitting the whole frame and filling the screen. Enter immersive playback to keep only the progress bar, then tap the picture to restore controls. Swipe on the left for brightness or on the right for volume. |
 | **Video layouts** | Preview 12 fit/fill templates with either bundled format. Enter **Mini player**, drag the handle or resize corner, or enter dimensions under **Custom size**. |
 | **Vertical feed** | Swipe or select an episode from **Episodes**. Let a clip end to see the feed advance. |
 | **Custom controls** | Press **Play** to start from 2 seconds, skip forward, and replay after completion. The host renders its own controls and progress. |
 | **Episode access** | Episode 2 starts locked. Press **Unlock episode** to grant demo access and retry. Reopening the example resets the grant. |
-| **Cache policies** | Compare Off, Players, Bytes, and Custom. With **Custom**, change how many episodes to prefetch ahead or behind while the selected episode plays. |
-| **Remote playback** | Enter an HTTPS MP4 or HLS URL or choose **Apple HLS sample**. Check first-frame timing and open **Playback** to adjust quality preferences, audio, or subtitles. |
+| **Cache policies** | Compare Off, Players, Bytes, and Custom. Set how many episodes to prefetch ahead or behind. **Clear cache** removes temporary copies and turns prefetch off until you choose a policy. |
+| **Remote playback** | Enter an HTTPS MP4 or HLS URL, or choose **Tears of Steel (HLS)** or **Sintel Trailer (MP4)**. Use **Download video** with MP4 to keep a local copy, then **Delete local copy** to return to streaming. |
 
 See the [playback controller](Demo/Sources/DemoPlayerViewController.swift) for session and lifecycle wiring, and the [cache demo](Demo/Sources/DemoCacheViewController.swift) for a working `PlaybackCacheAdapter` backed by temporary files.
 
-<img src="Demo/Media/01.jpg" alt="Afterglow, demo motion study 01" width="150"> <img src="Demo/Media/02.jpg" alt="Deep Water, demo motion study 02" width="150"> <img src="Demo/Media/03.jpg" alt="Blue Hour, demo motion study 03" width="150">
+<img src="Demo/Media/Series/steel-01.jpg" alt="Tears of Steel episode poster" width="150"> <img src="Demo/Media/Series/coffee-02.jpg" alt="Coffee Run episode poster" width="150"> <img src="Demo/Media/Series/charge-03.jpg" alt="Charge episode poster" width="150">
 
 ## Installation
 
@@ -137,7 +138,7 @@ xcodebuild -project Demo/DramaPlayerDemo.xcodeproj -scheme DramaPlayerDemo \
   -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
 ```
 
-The core tests cover stale selections, retained players, playback focus, cache fallback, and authorization. The [demo media generator](Demo/Tools/GenerateMedia.swift) can regenerate the bundled artwork and videos on macOS with `swift Demo/Tools/GenerateMedia.swift Demo/Media`.
+The core tests cover stale selections, retained players, playback focus, cache fallback, and authorization. The [media credits](Demo/Media/Series/ATTRIBUTION.md) include the commands to reproduce the demo clips and posters.
 
 ## License
 

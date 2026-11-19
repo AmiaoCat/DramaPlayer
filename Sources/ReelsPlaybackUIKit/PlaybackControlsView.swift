@@ -13,7 +13,24 @@ public final class PlaybackControlsView: UIView {
     private let time = UILabel()
     private let slider = UISlider()
     private let buffered = UIProgressView(progressViewStyle: .default)
+    private let standard = UIStackView()
+    private let progress = UIProgressView(progressViewStyle: .default)
+    private var standardLayout: [NSLayoutConstraint] = []
+    private var progressLayout: [NSLayoutConstraint] = []
     private var events: Task<Void, Never>?
+
+    /// Show a thin, read-only playhead indicator in place of the interactive controls.
+    public var showsProgressOnly = false {
+        didSet {
+            guard showsProgressOnly != oldValue else { return }
+            if showsProgressOnly, session.snapshot.isScrubbing { session.endScrubbing(commit: false) }
+            NSLayoutConstraint.deactivate(showsProgressOnly ? standardLayout : progressLayout)
+            standard.isHidden = showsProgressOnly
+            progress.isHidden = !showsProgressOnly
+            backgroundColor = showsProgressOnly ? .clear : UIColor.black.withAlphaComponent(0.62)
+            NSLayoutConstraint.activate(showsProgressOnly ? progressLayout : standardLayout)
+        }
+    }
 
     public init(session: PlaybackSession) {
         self.session = session
@@ -49,16 +66,31 @@ public final class PlaybackControlsView: UIView {
         let row = UIStackView(arrangedSubviews: [playPause, time, UIView(), speed])
         row.alignment = .center
         row.spacing = 8
-        let stack = UIStackView(arrangedSubviews: [row, slider, buffered])
-        stack.axis = .vertical
-        stack.spacing = 2
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
+        [row, slider, buffered].forEach { standard.addArrangedSubview($0) }
+        standard.axis = .vertical
+        standard.spacing = 2
+        standard.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(standard)
+        progress.progressTintColor = .white
+        progress.trackTintColor = UIColor.black.withAlphaComponent(0.65)
+        progress.accessibilityLabel = String(localized: "Playback progress")
+        progress.isHidden = true
+        progress.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(progress)
+        standardLayout = [
+            standard.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            standard.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+            standard.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            standard.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12)
+        ]
+        progressLayout = [
+            progress.topAnchor.constraint(equalTo: topAnchor),
+            progress.bottomAnchor.constraint(equalTo: bottomAnchor),
+            progress.leadingAnchor.constraint(equalTo: leadingAnchor),
+            progress.trailingAnchor.constraint(equalTo: trailingAnchor)
+        ]
+        NSLayoutConstraint.activate(standardLayout)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             playPause.widthAnchor.constraint(equalToConstant: 44),
             playPause.heightAnchor.constraint(equalToConstant: 44),
             speed.heightAnchor.constraint(equalToConstant: 44)
@@ -87,12 +119,15 @@ public final class PlaybackControlsView: UIView {
         speed.setTitle(Self.rateText(snapshot.rate), for: .normal)
         time.text = "\(Self.timeText(snapshot.position)) / \(snapshot.duration.map(Self.timeText) ?? "–:–")"
         if let duration = snapshot.duration, duration > 0 {
+            let fraction = Float(min(1, max(0, snapshot.position / duration)))
             slider.isEnabled = true
-            if !slider.isTracking { slider.value = Float(min(1, max(0, snapshot.position / duration))) }
+            if !slider.isTracking { slider.value = fraction }
+            progress.progress = fraction
             buffered.progress = Float(min(1, max(0, snapshot.bufferedUntil / duration)))
         } else {
             slider.isEnabled = false
             slider.value = 0
+            progress.progress = 0
             buffered.progress = 0
         }
     }

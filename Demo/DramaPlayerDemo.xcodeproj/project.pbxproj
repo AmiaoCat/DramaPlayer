@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A51BDF8A13424E19841B732F /* DemoTemplatesViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A51BDF8A13424E19841B7330 /* DemoTemplatesViewController.swift */; };
+		BA40F44F1AA54C3B9CAAF008 /* 04.jpg in Resources */ = {isa = PBXBuildFile; fileRef = BA40F44F1AA54C3B9CAAF009 /* 04.jpg */; };
+		BA40F44F1AA54C3B9CAAF010 /* 04.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = BA40F44F1AA54C3B9CAAF011 /* 04.mp4 */; };
+		D3CA6EB2A8054B25B01791CD /* DemoCacheViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7BA591825F34069A36B4DE6 /* DemoCacheViewController.swift */; };
 		1AAD5E7F05DF1535BAA1FE73 /* ReelsPlaybackUIKit in Frameworks */ = {isa = PBXBuildFile; productRef = 822009C6A4381CBEC1F7646E /* ReelsPlaybackUIKit */; };
 		2330C7FFC91730BC097AA030 /* 03.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 9122D67EC963055499EF9579 /* 03.jpg */; };
 		27B892C7FBAB12B5F2852796 /* 02.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = DA01A9E15F93FF4CFA078574 /* 02.mp4 */; };
@@ -17,11 +21,14 @@
 		88CDD232B70501DB312BEAD7 /* DemoMenuViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B24CD870822AEC395EEFD36 /* DemoMenuViewController.swift */; };
 		9D2456D387270C1CF42CB767 /* 01.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = AF642574E76F373E50606AE3 /* 01.mp4 */; };
 		B3CF6D7241AE49D0DCE4751A /* DemoPlayerViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 971929C21A29B4B462893550 /* DemoPlayerViewController.swift */; };
-		C551E35E8EDD105C3643CEAF /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F1A0F461EEB9599701509BC2 /* Foundation.framework */; };
 		D0D29FBA17DD634E9A97C679 /* 01.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 7AA605F629D5317EFC0F73F3 /* 01.jpg */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		A51BDF8A13424E19841B7330 /* DemoTemplatesViewController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DemoTemplatesViewController.swift; sourceTree = "<group>"; };
+		BA40F44F1AA54C3B9CAAF009 /* 04.jpg */ = {isa = PBXFileReference; includeInIndex = 1; path = 04.jpg; sourceTree = "<group>"; };
+		BA40F44F1AA54C3B9CAAF011 /* 04.mp4 */ = {isa = PBXFileReference; includeInIndex = 1; path = 04.mp4; sourceTree = "<group>"; };
+		D7BA591825F34069A36B4DE6 /* DemoCacheViewController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DemoCacheViewController.swift; sourceTree = "<group>"; };
 		3B24CD870822AEC395EEFD36 /* DemoMenuViewController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DemoMenuViewController.swift; sourceTree = "<group>"; };
 		48ACA391D923D6DD08B0B48C /* DramaPlayerDemo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DramaPlayerDemo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5551C5ED947D2CFA46EBB926 /* AppDelegate.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -32,7 +39,6 @@
 		D9C75AAA1CC9FD99DBA9BB4F /* 03.mp4 */ = {isa = PBXFileReference; includeInIndex = 1; path = 03.mp4; sourceTree = "<group>"; };
 		DA01A9E15F93FF4CFA078574 /* 02.mp4 */ = {isa = PBXFileReference; includeInIndex = 1; path = 02.mp4; sourceTree = "<group>"; };
 		E331CD955A7C8692775BB7A5 /* 02.jpg */ = {isa = PBXFileReference; includeInIndex = 1; path = 02.jpg; sourceTree = "<group>"; };
-		F1A0F461EEB9599701509BC2 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -40,7 +46,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				C551E35E8EDD105C3643CEAF /* Foundation.framework in Frameworks */,
 				64DFE531361799CEA5E4DC64 /* ReelsPlaybackCore in Frameworks */,
 				1AAD5E7F05DF1535BAA1FE73 /* ReelsPlaybackUIKit in Frameworks */,
 			);
@@ -49,38 +54,23 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		02240579E4263C22B911075B /* iOS */ = {
-			isa = PBXGroup;
-			children = (
-				F1A0F461EEB9599701509BC2 /* Foundation.framework */,
-			);
-			name = iOS;
-			sourceTree = "<group>";
-		};
 		034B042EEFB24E34EF43B2F2 /* Sources */ = {
 			isa = PBXGroup;
 			children = (
 				5551C5ED947D2CFA46EBB926 /* AppDelegate.swift */,
 				3B24CD870822AEC395EEFD36 /* DemoMenuViewController.swift */,
 				971929C21A29B4B462893550 /* DemoPlayerViewController.swift */,
+				D7BA591825F34069A36B4DE6 /* DemoCacheViewController.swift */,
+				A51BDF8A13424E19841B7330 /* DemoTemplatesViewController.swift */,
 			);
 			name = Sources;
 			path = Sources;
-			sourceTree = "<group>";
-		};
-		310F87E054A10F0F7EFD35AA /* Frameworks */ = {
-			isa = PBXGroup;
-			children = (
-				02240579E4263C22B911075B /* iOS */,
-			);
-			name = Frameworks;
 			sourceTree = "<group>";
 		};
 		6391ED432A448053242FF852 = {
 			isa = PBXGroup;
 			children = (
 				6FF0DE7F4AD1562B1BAB00D8 /* Products */,
-				310F87E054A10F0F7EFD35AA /* Frameworks */,
 				034B042EEFB24E34EF43B2F2 /* Sources */,
 				92FF009C1D4697EC2B90F82B /* Media */,
 			);
@@ -103,6 +93,8 @@
 				DA01A9E15F93FF4CFA078574 /* 02.mp4 */,
 				9122D67EC963055499EF9579 /* 03.jpg */,
 				D9C75AAA1CC9FD99DBA9BB4F /* 03.mp4 */,
+				BA40F44F1AA54C3B9CAAF009 /* 04.jpg */,
+				BA40F44F1AA54C3B9CAAF011 /* 04.mp4 */,
 			);
 			name = Media;
 			path = Media;
@@ -175,6 +167,8 @@
 				27B892C7FBAB12B5F2852796 /* 02.mp4 in Resources */,
 				2330C7FFC91730BC097AA030 /* 03.jpg in Resources */,
 				66BBD5FF535854C692BD2628 /* 03.mp4 in Resources */,
+				BA40F44F1AA54C3B9CAAF008 /* 04.jpg in Resources */,
+				BA40F44F1AA54C3B9CAAF010 /* 04.mp4 in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -188,6 +182,8 @@
 				669721ECFDD3C09EFFD509F3 /* AppDelegate.swift in Sources */,
 				88CDD232B70501DB312BEAD7 /* DemoMenuViewController.swift in Sources */,
 				B3CF6D7241AE49D0DCE4751A /* DemoPlayerViewController.swift in Sources */,
+				D3CA6EB2A8054B25B01791CD /* DemoCacheViewController.swift in Sources */,
+				A51BDF8A13424E19841B732F /* DemoTemplatesViewController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -264,7 +260,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = DramaPlayer;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				PRODUCT_BUNDLE_IDENTIFIER = com.amiaocat.DramaPlayerDemo;
@@ -337,7 +334,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = DramaPlayer;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				PRODUCT_BUNDLE_IDENTIFIER = com.amiaocat.DramaPlayerDemo;

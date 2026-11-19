@@ -140,15 +140,173 @@ final class PlaybackSessionTests: XCTestCase {
     }
 
     @MainActor
+    func testDiagnosticsCorrelatesStartFallbackAndTerminalFailure() async throws {
+        let (session, drivers) = makeSession(cache: CacheStub())
+        var events: [PlaybackDiagnosticEvent] = []
+        let stream = session.diagnostics()
+        let observer = Task { @MainActor in
+            for await event in stream { events.append(event) }
+        }
+        defer { observer.cancel() }
+
+        session.setItems([.init(id: "a")])
+        session.activate()
+        try await wait { drivers.values.first?.isPlaying == true }
+        let driver = drivers.values[0]
+        driver.onFailure?()
+        driver.onFailure?() // Duplicate terminal notification during cache invalidation.
+        try await wait { driver.loadedURLs.count == 2 && driver.isPlaying }
+        driver.onFailure?()
+        try await wait { events.count >= 4 }
+
+        XCTAssertEqual(events.count, 4)
+        XCTAssertEqual(Set(events.map(\.attemptID)).count, 1)
+        XCTAssertEqual(Set(events.map(\.itemID)), ["a"])
+        XCTAssertEqual(events[0].kind, .started)
+        if case .firstFrame(let seconds) = events[1].kind {
+            XCTAssertGreaterThanOrEqual(seconds, 0)
+        } else {
+            XCTFail("Expected exactly one startup frame")
+        }
+        XCTAssertEqual(events[2].kind, .cachedMediaFallback)
+        XCTAssertEqual(events[3].kind, .finished(.failed(.playbackFailed)))
+        XCTAssertEqual(session.snapshot.state, .failed(.playbackFailed))
+    }
+
+    func testAttemptMeasuresPostStartupBufferingAndInterruptedIntervals() {
+        var attempt = PlaybackAttempt(itemID: "a", start: 100)
+        var events: [PlaybackDiagnosticEvent.Kind] = []
+        let record: (PlaybackDiagnosticEvent) -> Void = { events.append($0.kind) }
+        attempt.update(state: .buffering, firstFrameReady: false, seeking: false, now: 101, emit: record)
+        attempt.update(state: .playing, firstFrameReady: true, seeking: false, now: 102, emit: record)
+        attempt.update(state: .buffering, firstFrameReady: true, seeking: true, now: 103, emit: record)
+        attempt.update(state: .buffering, firstFrameReady: true, seeking: false, now: 104, emit: record)
+        attempt.update(state: .playing, firstFrameReady: true, seeking: false, now: 107, emit: record)
+        attempt.update(state: .buffering, firstFrameReady: true, seeking: false, now: 110, emit: record)
+        attempt.finish(.interrupted, now: 112, emit: record)
+        XCTAssertEqual(events, [
+            .firstFrame(seconds: 2),
+            .rebufferingEnded(seconds: 3, recovered: true),
+            .rebufferingEnded(seconds: 2, recovered: false),
+            .finished(.interrupted)
+        ])
+    }
+
+    @MainActor
+    func testStreamPreferencesUpdateRetainedPlayersAndApplyToNewLoads() async throws {
+        let (session, drivers) = makeSession(mode: .vertical)
+        session.setItems(["a", "b", "c"].map { PlaybackItem(id: $0) })
+        session.activate()
+        try await wait { drivers.values.count == 2 && drivers.values[1].status == .ready }
+        let preferences = PlaybackStreamPreferences(preferredPeakBitRate: 1_000_000,
+                                                    preferredPeakBitRateForExpensiveNetworks: -.infinity,
+                                                    preferredForwardBufferDuration: 4)
+        session.setStreamPreferences(preferences)
+        XCTAssertEqual(preferences.preferredPeakBitRateForExpensiveNetworks, 0)
+        XCTAssertEqual(drivers.values.map(\.preferences), [preferences, preferences])
+        session.select("b")
+        try await wait { drivers.values.count == 3 && drivers.values[2].status == .ready }
+        XCTAssertEqual(drivers.values[2].preferences, preferences)
+    }
+
+    @MainActor
+    func testChangingPreloadPolicyPreservesSelectedPlayer() async throws {
+        let (session, drivers) = makeSession(mode: .vertical)
+        session.setItems([.init(id: "a"), .init(id: "b")])
+        session.activate()
+        try await wait { drivers.values.count == 2 && drivers.values[1].status == .ready }
+        let selected = drivers.values[0]
+        selected.position = 7
+
+        session.setPreloadPolicy(.disabled)
+        XCTAssertNil(session.presentation(for: "b"))
+        XCTAssertTrue(session.presentation(for: "a")?.layer === selected.layer)
+        XCTAssertEqual(session.snapshot.position, 7)
+        selected.onChange?()
+        XCTAssertEqual(drivers.values.count, 2)
+
+        session.setPreloadPolicy(.preparedPlayer)
+        try await wait { drivers.values.count == 3 && drivers.values[2].status == .ready }
+        XCTAssertTrue(selected.isPlaying)
+        XCTAssertTrue(session.presentation(for: "a")?.layer === selected.layer)
+    }
+
+    @MainActor
+    func testLoadDeadlineRejectsLateResolverResultAndAllowsRetry() async throws {
+        let resolver = DelayedFirstResolver()
+        let (session, drivers) = makeSession(provider: resolver, loadTimeout: 0.1)
+        session.setItems([.init(id: "a")])
+        session.activate()
+        try await wait { session.snapshot.state == .failed(.sourceUnavailable) }
+        XCTAssertTrue(drivers.values.first?.loadedURLs.isEmpty == true)
+
+        session.retry()
+        try await wait { session.snapshot.state == .playing }
+        await resolver.completeFirstRequest()
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertTrue(drivers.values.first?.loadedURLs.isEmpty == true)
+        XCTAssertEqual(drivers.values.last?.loadedURLs.count, 1)
+    }
+
+    @MainActor
+    func testLogsFilterLevelsAndOmitSensitiveInputsByDefault() async throws {
+        let recorder = LogRecorder()
+        let logger = PlaybackLogger(minimumLevel: .info) { recorder.append($0) }
+        let provider = PlaybackSourceResolver { _, _ in
+            return .allowed(.init(url: URL(string: "https://example.invalid/video?token=secret")!,
+                                  cacheKey: "private-cache-key"))
+        }
+        let (session, drivers) = makeSession(provider: provider, logger: logger)
+        session.setItems([.init(id: "account-private-episode")])
+        session.activate()
+        try await wait { drivers.values.first?.isPlaying == true }
+        drivers.values[0].onFailure?()
+
+        let entries = recorder.entries
+        XCTAssertEqual(entries.map(\.event), [.attemptStarted, .firstFrame, .playbackFailed, .attemptFinished])
+        XCTAssertTrue(entries.allSatisfy { $0.itemID == nil && $0.level >= .info })
+        XCTAssertEqual(Set(entries.map(\.sessionID)).count, 1)
+        for entry in entries {
+            let fields = entry.fields.values.joined()
+            XCTAssertFalse(fields.contains("secret"))
+            XCTAssertFalse(fields.contains("private"))
+            XCTAssertFalse(fields.contains("example.invalid"))
+        }
+    }
+
+    @MainActor
+    func testSlowCachedPlayerTimesOutAndFallsBackToOrigin() async throws {
+        let cache = CacheStub()
+        let driver = FakeDriver { $0.lastPathComponent == "cached.mp4" ? .loading : .ready }
+        let session = PlaybackSession(
+            configuration: .init(loadTimeout: 0.1),
+            sourceProvider: PlaybackSourceResolver { item, _ in
+                .allowed(.init(url: URL(fileURLWithPath: "/\(item.id).mp4"), cacheKey: item.id))
+            },
+            cache: cache, focus: PlaybackFocus(), makeDriver: { driver }
+        )
+        session.setItems([.init(id: "a", resumePosition: 12)])
+        session.activate()
+        try await wait { driver.loadedURLs.count == 2 && session.snapshot.state == .playing }
+        XCTAssertEqual(driver.loadedURLs.map(\.lastPathComponent), ["cached.mp4", "a.mp4"])
+        XCTAssertEqual(session.snapshot.position, 12)
+        let invalidations = await cache.invalidations
+        XCTAssertEqual(invalidations, 1)
+    }
+
+    @MainActor
     private func makeSession(mode: PlaybackConfiguration.Mode = .single, focus: PlaybackFocus? = nil,
                              provider: (any PlaybackSourceProvider)? = nil,
                              cache: any PlaybackMediaCache = DirectPlaybackMediaCache(),
-                             endBehavior: PlaybackConfiguration.EndBehavior = .stop) -> (PlaybackSession, Drivers) {
+                             endBehavior: PlaybackConfiguration.EndBehavior = .stop,
+                             loadTimeout: TimeInterval? = 30,
+                             logger: PlaybackLogger? = nil) -> (PlaybackSession, Drivers) {
         let drivers = Drivers()
         let session = PlaybackSession(
-            configuration: .init(mode: mode, endBehavior: endBehavior), sourceProvider: provider ?? PlaybackSourceResolver { item, _ in
+            configuration: .init(mode: mode, endBehavior: endBehavior, loadTimeout: loadTimeout),
+            sourceProvider: provider ?? PlaybackSourceResolver { item, _ in
                 .allowed(.init(url: URL(fileURLWithPath: "/\(item.id).mp4"), cacheKey: item.id))
-            }, cache: cache, focus: focus ?? PlaybackFocus()
+            }, cache: cache, focus: focus ?? PlaybackFocus(), logger: logger
         ) {
             let driver = FakeDriver()
             drivers.values.append(driver)
@@ -168,6 +326,31 @@ final class PlaybackSessionTests: XCTestCase {
     }
 }
 
+private actor DelayedFirstResolver: PlaybackSourceProvider {
+    private var calls = 0
+    private var firstRequest: CheckedContinuation<Void, Never>?
+
+    func source(for item: PlaybackItem, purpose: PlaybackPurpose) async throws -> PlaybackAccess {
+        calls += 1
+        if calls == 1 { await withCheckedContinuation { firstRequest = $0 } }
+        return .allowed(.init(url: URL(fileURLWithPath: "/\(item.id).mp4"), cacheKey: item.id))
+    }
+
+    func completeFirstRequest() {
+        firstRequest?.resume()
+        firstRequest = nil
+    }
+}
+
+private final class LogRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [PlaybackLogEntry] = []
+
+    var entries: [PlaybackLogEntry] { lock.withLock { storage } }
+
+    func append(_ entry: PlaybackLogEntry) { lock.withLock { storage.append(entry) } }
+}
+
 @MainActor
 private final class Drivers {
     var values: [FakeDriver] = []
@@ -178,6 +361,7 @@ private final class FakeDriver: PlaybackDriver {
     let layer = AVPlayerLayer()
     var onChange: (() -> Void)?
     var onEnd: (() -> Void)?
+    var onFailure: (() -> Void)?
     var status: DriverStatus = .empty
     var position: TimeInterval = 0
     var duration: TimeInterval? = 60
@@ -187,11 +371,24 @@ private final class FakeDriver: PlaybackDriver {
     var isFrameReady: Bool { status == .ready }
     var lastRate: Float = 1
     var loadedURLs: [URL] = []
+    var preferences = PlaybackStreamPreferences()
+    private let statusAfterLoad: (URL) -> DriverStatus
 
-    func load(_ url: URL) {
-        loadedURLs.append(url)
-        status = .ready
+    init(statusAfterLoad: @escaping (URL) -> DriverStatus = { _ in .ready }) {
+        self.statusAfterLoad = statusAfterLoad
     }
+
+    func load(_ url: URL, preferences: PlaybackStreamPreferences) {
+        self.preferences = preferences
+        loadedURLs.append(url)
+        status = statusAfterLoad(url)
+    }
+
+    func setStreamPreferences(_ preferences: PlaybackStreamPreferences) { self.preferences = preferences }
+
+    func mediaTrackGroup(for kind: PlaybackMediaTrackKind) async -> PlaybackMediaTrackGroup? { nil }
+
+    func selectMediaTrack(_ selection: PlaybackMediaTrackSelection, in group: PlaybackMediaTrackGroup) -> Bool { false }
 
     func play(rate: Float) {
         lastRate = rate

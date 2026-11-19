@@ -10,10 +10,19 @@ public final class SinglePlaybackView: UIView {
     private let video: PlaybackVideoView
     private var events: Task<Void, Never>?
 
+    public var scaling: PlaybackVideoScaling {
+        get { video.scaling }
+        set { video.scaling = newValue }
+    }
+
+    public convenience init(session: PlaybackSession, coverLoader: any PlaybackCoverLoader, showsControls: Bool) {
+        self.init(session: session, coverLoader: coverLoader, showsControls: showsControls, scaling: .fill)
+    }
+
     public init(session: PlaybackSession, coverLoader: any PlaybackCoverLoader = URLPlaybackCoverLoader(),
-                showsControls: Bool = true) {
+                showsControls: Bool = true, scaling: PlaybackVideoScaling = .fill) {
         self.session = session
-        video = PlaybackVideoView(coverLoader: coverLoader)
+        video = PlaybackVideoView(coverLoader: coverLoader, scaling: scaling)
         super.init(frame: .zero)
         addSubview(video)
         video.frame = bounds
@@ -48,10 +57,22 @@ public final class VerticalPlaybackView: UIView, UICollectionViewDataSource, UIC
     private var itemIDs: [String] = []
     private var lastSize: CGSize = .zero
 
+    public var scaling: PlaybackVideoScaling {
+        didSet {
+            guard scaling != oldValue else { return }
+            for case let page as Page in collection.visibleCells { page.video?.scaling = scaling }
+        }
+    }
+
+    public convenience init(session: PlaybackSession, coverLoader: any PlaybackCoverLoader, showsControls: Bool) {
+        self.init(session: session, coverLoader: coverLoader, showsControls: showsControls, scaling: .fill)
+    }
+
     public init(session: PlaybackSession, coverLoader: any PlaybackCoverLoader = URLPlaybackCoverLoader(),
-                showsControls: Bool = true) {
+                showsControls: Bool = true, scaling: PlaybackVideoScaling = .fill) {
         self.session = session
         loader = coverLoader
+        self.scaling = scaling
         let layout = UICollectionViewFlowLayout()
         layout.minimumLineSpacing = 0
         collection = UICollectionView(frame: .zero, collectionViewLayout: layout)
@@ -78,10 +99,11 @@ public final class VerticalPlaybackView: UIView, UICollectionViewDataSource, UIC
     public override func layoutSubviews() {
         super.layoutSubviews()
         collection.frame = bounds
-        if lastSize != bounds.size {
+        if lastSize != bounds.size, bounds.width > 0, bounds.height > 0 {
             lastSize = bounds.size
             collection.collectionViewLayout.invalidateLayout()
-            positionSelection()
+            collection.layoutIfNeeded()
+            positionSelection(afterResize: true)
         }
     }
 
@@ -96,7 +118,7 @@ public final class VerticalPlaybackView: UIView, UICollectionViewDataSource, UIC
 
     public func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
         let cell = collectionView.dequeueReusableCell(withReuseIdentifier: Page.reuseID, for: indexPath) as! Page
-        cell.installCoverLoaderIfNeeded(loader)
+        cell.installCoverLoaderIfNeeded(loader, scaling: scaling)
         render(cell, at: indexPath)
         return cell
     }
@@ -150,8 +172,9 @@ public final class VerticalPlaybackView: UIView, UICollectionViewDataSource, UIC
         }
     }
 
-    private func positionSelection() {
-        guard !collection.isDragging, !collection.isDecelerating, collection.bounds.height > 0,
+    private func positionSelection(afterResize: Bool = false) {
+        guard afterResize || (!collection.isDragging && !collection.isDecelerating) else { return }
+        guard collection.bounds.height > 0,
               let id = session.selectedID, let index = itemIDs.firstIndex(of: id) else { return }
         let y = CGFloat(index) * collection.bounds.height
         if abs(y - collection.contentOffset.y) > 1 {
@@ -163,6 +186,7 @@ public final class VerticalPlaybackView: UIView, UICollectionViewDataSource, UIC
         guard itemIDs.indices.contains(index.item) else { return }
         let id = itemIDs[index.item]
         let item = session.items.first { $0.id == id }
+        cell.video?.scaling = scaling
         cell.video?.display(item, presentation: session.presentation(for: id), snapshot: session.snapshot)
     }
 
@@ -172,9 +196,9 @@ public final class VerticalPlaybackView: UIView, UICollectionViewDataSource, UIC
         static let reuseID = "PlaybackPage"
         private(set) var video: PlaybackVideoView?
 
-        func installCoverLoaderIfNeeded(_ loader: any PlaybackCoverLoader) {
+        func installCoverLoaderIfNeeded(_ loader: any PlaybackCoverLoader, scaling: PlaybackVideoScaling) {
             guard video == nil else { return }
-            let video = PlaybackVideoView(coverLoader: loader)
+            let video = PlaybackVideoView(coverLoader: loader, scaling: scaling)
             video.frame = contentView.bounds
             video.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             contentView.addSubview(video)

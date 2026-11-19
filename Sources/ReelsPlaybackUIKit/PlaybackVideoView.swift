@@ -25,6 +25,20 @@ public struct URLPlaybackCoverLoader: PlaybackCoverLoader {
 
 @MainActor
 public final class PlaybackVideoView: UIView {
+    /// Adjusts both the poster and the video without changing the active player.
+    public var scaling: PlaybackVideoScaling {
+        didSet {
+            guard scaling != oldValue else { return }
+            cover.contentMode = scaling.coverContentMode
+            if let playbackLayer, playbackLayer.superlayer === layer {
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+                playbackLayer.videoGravity = scaling.videoGravity
+                CATransaction.commit()
+            }
+        }
+    }
+
     private let cover = UIImageView()
     private let loadingIndicator = UIActivityIndicatorView(style: .large)
     private let loader: any PlaybackCoverLoader
@@ -34,12 +48,17 @@ public final class PlaybackVideoView: UIView {
     private var playbackLayer: AVPlayerLayer?
     private var hasRevealed = false
 
-    public init(coverLoader: any PlaybackCoverLoader = URLPlaybackCoverLoader()) {
+    public convenience init(coverLoader: any PlaybackCoverLoader) {
+        self.init(coverLoader: coverLoader, scaling: .fill)
+    }
+
+    public init(coverLoader: any PlaybackCoverLoader = URLPlaybackCoverLoader(), scaling: PlaybackVideoScaling = .fill) {
         loader = coverLoader
+        self.scaling = scaling
         super.init(frame: .zero)
         backgroundColor = .black
         clipsToBounds = true
-        cover.contentMode = .scaleAspectFill
+        cover.contentMode = scaling.coverContentMode
         cover.clipsToBounds = true
         cover.isAccessibilityElement = false
         addSubview(cover)
@@ -86,6 +105,7 @@ public final class PlaybackVideoView: UIView {
             if let nextLayer {
                 CATransaction.begin()
                 CATransaction.setDisableActions(true)
+                nextLayer.videoGravity = scaling.videoGravity
                 nextLayer.frame = bounds
                 layer.insertSublayer(nextLayer, below: cover.layer)
                 CATransaction.commit()
@@ -127,5 +147,15 @@ public final class PlaybackVideoView: UIView {
     }
 
     deinit { coverWork?.cancel() }
+}
+
+public enum PlaybackVideoScaling: Equatable, Sendable {
+    /// Preserve the entire image with letterboxing as needed.
+    case fit
+    /// Fill the viewport, cropping the edges as needed.
+    case fill
+
+    fileprivate var videoGravity: AVLayerVideoGravity { self == .fit ? .resizeAspect : .resizeAspectFill }
+    fileprivate var coverContentMode: UIView.ContentMode { self == .fit ? .scaleAspectFit : .scaleAspectFill }
 }
 #endif

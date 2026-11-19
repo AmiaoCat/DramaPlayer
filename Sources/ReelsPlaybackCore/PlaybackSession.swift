@@ -19,6 +19,7 @@ public final class PlaybackSession {
         var source: PlaybackSource?
         var media: PlaybackMedia?
         var work: Task<Void, Never>?
+        var deadline: Task<Void, Never>?
         var initialSeek: Task<Void, Never>?
         var isPositioned: Bool
         var recoveryPosition: TimeInterval?
@@ -27,7 +28,7 @@ public final class PlaybackSession {
         var ended = false
         var retriedCache = false
         var reportedFrame = false
-        var parkedAt = Date.now
+        var parkedAt = ProcessInfo.processInfo.systemUptime
 
         init(item: PlaybackItem, purpose: PlaybackPurpose, driver: any PlaybackDriver) {
             self.item = item
@@ -38,6 +39,7 @@ public final class PlaybackSession {
 
         deinit {
             work?.cancel()
+            deadline?.cancel()
             initialSeek?.cancel()
         }
     }
@@ -46,16 +48,22 @@ public final class PlaybackSession {
     public private(set) var items: [PlaybackItem] = []
     public private(set) var selectedID: String?
     public private(set) var rate: Float = 1
+    public private(set) var streamPreferences: PlaybackStreamPreferences
+    public private(set) var preloadPolicy: PlaybackConfiguration.Preload
 
     private let sourceProvider: any PlaybackSourceProvider
     private let cache: any PlaybackMediaCache
     private let focus: PlaybackFocus
+    private let logger: PlaybackLogger?
+    private let logSessionID = UUID()
     private let makeDriver: @MainActor () -> any PlaybackDriver
     private var slots: [String: Slot] = [:]
     private var recent: [String] = []
     private var manuallyPaused: Set<String> = []
     private var suspensions: Set<PlaybackSuspension> = []
     private var subscribers: [UUID: AsyncStream<PlaybackEvent>.Continuation] = [:]
+    private var diagnosticSubscribers: [UUID: AsyncStream<PlaybackDiagnosticEvent>.Continuation] = [:]
+    private var attempt: PlaybackAttempt?
     private var lastSnapshot: PlaybackSnapshot?
     private var active = false
     private var wantsPlayback = false
@@ -66,21 +74,31 @@ public final class PlaybackSession {
     private var prefetchedID: String?
     private var preloadingSuppressed = false
 
+    public convenience init(configuration: PlaybackConfiguration,
+                            sourceProvider: any PlaybackSourceProvider,
+                            cache: any PlaybackMediaCache, focus: PlaybackFocus?) {
+        self.init(configuration: configuration, sourceProvider: sourceProvider, cache: cache,
+                  focus: focus, logger: nil)
+    }
+
     public convenience init(configuration: PlaybackConfiguration = .init(),
                             sourceProvider: any PlaybackSourceProvider,
                             cache: any PlaybackMediaCache = DirectPlaybackMediaCache(),
-                            focus: PlaybackFocus? = nil) {
+                            focus: PlaybackFocus? = nil, logger: PlaybackLogger? = nil) {
         self.init(configuration: configuration, sourceProvider: sourceProvider, cache: cache,
-                  focus: focus ?? .shared, makeDriver: { AVPlaybackDriver() })
+                  focus: focus ?? .shared, logger: logger, makeDriver: { AVPlaybackDriver() })
     }
 
     init(configuration: PlaybackConfiguration, sourceProvider: any PlaybackSourceProvider,
-         cache: any PlaybackMediaCache, focus: PlaybackFocus,
+         cache: any PlaybackMediaCache, focus: PlaybackFocus, logger: PlaybackLogger? = nil,
          makeDriver: @escaping @MainActor () -> any PlaybackDriver) {
         self.configuration = configuration
+        streamPreferences = configuration.streamPreferences
+        preloadPolicy = configuration.preload
         self.sourceProvider = sourceProvider
         self.cache = cache
         self.focus = focus
+        self.logger = logger
         self.makeDriver = makeDriver
     }
 
@@ -109,6 +127,19 @@ public final class PlaybackSession {
         return stream
     }
 
+    /// Live, bounded telemetry with the host's item ID and no resolved source URL or history.
+    public func diagnostics() -> AsyncStream<PlaybackDiagnosticEvent> {
+        let id = UUID()
+        let (stream, continuation) = AsyncStream.makeStream(
+            of: PlaybackDiagnosticEvent.self, bufferingPolicy: .bufferingNewest(128)
+        )
+        diagnosticSubscribers[id] = continuation
+        continuation.onTermination = { [weak self] _ in
+            Task { @MainActor [weak self] in self?.diagnosticSubscribers.removeValue(forKey: id) }
+        }
+        return stream
+    }
+
     /// Replace the queue, preserving the active item when its descriptor and selection still match.
     public func setItems(_ items: [PlaybackItem], selectedID requested: String? = nil) {
         var seen: Set<String> = []
@@ -117,6 +148,8 @@ public final class PlaybackSession {
         let next = requested.flatMap { byID[$0]?.id } ?? selectedID.flatMap { byID[$0]?.id } ?? updated.first?.id
         let keepsSelection = next == selectedID
             && updated.first(where: { $0.id == next }) == self.items.first(where: { $0.id == next })
+        log(.debug, .queueUpdated, itemID: next,
+            fields: ["count": String(updated.count), "ignored": String(items.count - updated.count)])
 
         cancelPrefetch()
         for (id, slot) in slots where byID[id] != slot.item { release(id) }
@@ -140,6 +173,7 @@ public final class PlaybackSession {
 
     /// Call when the owning screen is visible and allowed to take playback focus.
     public func activate() {
+        if !active { log(.debug, .activated, itemID: selectedID) }
         focus.claim(self)
         active = true
         if suspensions.isEmpty { refreshExpiredSelection() }
@@ -154,6 +188,7 @@ public final class PlaybackSession {
     }
 
     func focusWasTaken() {
+        if active { log(.debug, .deactivated, itemID: selectedID) }
         active = false
         cancelPrefetch()
         cancelUnselectedLoads()
@@ -213,6 +248,44 @@ public final class PlaybackSession {
         publish()
     }
 
+    /// Updates the selected and retained players, and supplies hints for future loads.
+    public func setStreamPreferences(_ preferences: PlaybackStreamPreferences) {
+        guard streamPreferences != preferences else { return }
+        streamPreferences = preferences
+        log(.debug, .streamPreferencesChanged, itemID: selectedID, fields: [
+            "peakBitRate": String(preferences.preferredPeakBitRate),
+            "expensivePeakBitRate": String(preferences.preferredPeakBitRateForExpensiveNetworks),
+            "forwardBufferSeconds": String(preferences.preferredForwardBufferDuration)
+        ])
+        for slot in slots.values { slot.driver.setStreamPreferences(preferences) }
+    }
+
+    /// Changes proactive loading without restarting the current episode.
+    public func setPreloadPolicy(_ policy: PlaybackConfiguration.Preload) {
+        guard preloadPolicy != policy else { return }
+        preloadPolicy = policy
+        log(.info, .preloadPolicyChanged, itemID: selectedID, fields: ["policy": String(describing: policy)])
+        cancelPrefetch()
+        for id in Array(slots.keys) where id != selectedID { release(id) }
+        reconcileWindow()
+        publish()
+    }
+
+    /// Loads embedded or HLS media options for the selected item.
+    public func mediaTrackGroup(for kind: PlaybackMediaTrackKind) async -> PlaybackMediaTrackGroup? {
+        guard let slot = selectedSlot, case .installed = slot.phase else { return nil }
+        let group = await slot.driver.mediaTrackGroup(for: kind)
+        guard selectedSlot === slot, !Task.isCancelled else { return nil }
+        return group
+    }
+
+    /// Applies a selection only while the returned group still belongs to the selected asset.
+    @discardableResult
+    public func selectMediaTrack(_ selection: PlaybackMediaTrackSelection, in group: PlaybackMediaTrackGroup) -> Bool {
+        guard let slot = selectedSlot, case .installed = slot.phase else { return false }
+        return slot.driver.selectMediaTrack(selection, in: group)
+    }
+
     public func beginScrubbing() {
         guard scrubPosition == nil, let slot = selectedSlot, slot.isPositioned, slot.driver.duration != nil else { return }
         cancelSeek()
@@ -245,6 +318,8 @@ public final class PlaybackSession {
 
     public func retry() {
         guard let selectedID else { return }
+        log(.info, .retryRequested, itemID: selectedID)
+        finishAttempt(.interrupted)
         cancelSeek()
         scrubPosition = nil
         release(selectedID)
@@ -254,6 +329,8 @@ public final class PlaybackSession {
 
     /// Drop authorization and decoded frames after an account, grant, or rendition change.
     public func invalidateSources() {
+        log(.info, .sourcesInvalidated, itemID: selectedID)
+        finishAttempt(.interrupted)
         cancelSeek()
         scrubPosition = nil
         cancelPrefetch()
@@ -263,6 +340,7 @@ public final class PlaybackSession {
     }
 
     public func discardInactiveItems() {
+        log(.warning, .memoryPressure, itemID: selectedID)
         preloadingSuppressed = true
         cancelPrefetch()
         for id in Array(slots.keys) where id != selectedID { release(id) }
@@ -297,6 +375,7 @@ public final class PlaybackSession {
     }
 
     private func switchSelection(to id: String?) {
+        finishAttempt(.interrupted)
         preloadingSuppressed = false
         cancelSeek()
         scrubPosition = nil
@@ -305,9 +384,10 @@ public final class PlaybackSession {
             old.driver.pause()
             old.started = false
             old.warmed = false
-            old.parkedAt = .now
+            old.parkedAt = ProcessInfo.processInfo.systemUptime
         }
         selectedID = id
+        log(.debug, .selectionChanged, itemID: id)
         wantsPlayback = id.map { configuration.autoplay && !manuallyPaused.contains($0) } ?? false
         if let id {
             recent.removeAll { $0 == id }
@@ -328,7 +408,7 @@ public final class PlaybackSession {
     private func isReusable(_ slot: Slot) -> Bool {
         guard case .installed = slot.phase, slot.source?.isValid == true,
               slot.driver.status != .failed else { return false }
-        return Date.now.timeIntervalSince(slot.parkedAt) <= configuration.retention
+        return ProcessInfo.processInfo.systemUptime - slot.parkedAt <= configuration.retention
     }
 
     private func refreshExpiredSelection() {
@@ -374,7 +454,7 @@ public final class PlaybackSession {
         guard !preloadingSuppressed, let current = selectedSlot, current.driver.status == .ready, current.isPositioned,
               case .installed = current.phase else { return }
 
-        switch configuration.preload {
+        switch preloadPolicy {
         case .disabled: break
         case .preparedPlayer:
             // Resolve at most one neighboring item at a time so the current stream gets priority.
@@ -395,6 +475,8 @@ public final class PlaybackSession {
     private func load(_ item: PlaybackItem, purpose: PlaybackPurpose) {
         let slot = Slot(item: item, purpose: purpose, driver: makeDriver())
         slots[item.id] = slot
+        log(.debug, .sourceRequested, itemID: item.id, fields: ["purpose": String(describing: purpose)])
+        armLoadDeadline(for: slot)
         slot.driver.onChange = { [weak self, weak slot] in
             guard let slot else { return }
             self?.driverChanged(slot)
@@ -402,6 +484,10 @@ public final class PlaybackSession {
         slot.driver.onEnd = { [weak self, weak slot] in
             guard let slot else { return }
             self?.driverEnded(slot)
+        }
+        slot.driver.onFailure = { [weak self, weak slot] in
+            guard let self, let slot, self.isCurrent(slot), case .installed = slot.phase, !slot.ended else { return }
+            self.recover(slot)
         }
         slot.work = Task { [weak self, weak slot, sourceProvider, cache] in
             let access: PlaybackAccess
@@ -420,16 +506,25 @@ public final class PlaybackSession {
                     return
                 }
                 let media: PlaybackMedia
-                do { media = try await cache.media(for: source) }
-                catch { media = PlaybackMedia(url: source.url) }
+                let cacheLookupFailed: Bool
+                do {
+                    media = try await cache.media(for: source)
+                    cacheLookupFailed = false
+                } catch {
+                    media = PlaybackMedia(url: source.url)
+                    cacheLookupFailed = true
+                }
                 guard let self, self.isCurrent(slot), !Task.isCancelled else { return }
+                if cacheLookupFailed { self.log(.warning, .cacheLookupFailed, itemID: item.id) }
                 guard source.isValid else {
                     self.fail(slot, .sourceExpired)
                     return
                 }
                 self.install(media, source: source, in: slot)
             case .requiresUserAction:
+                self?.log(.info, .accessRequired, itemID: item.id, fields: ["purpose": String(describing: purpose)])
                 slot.phase = .accessRequired
+                self?.cancelLoadDeadline(for: slot)
                 self?.publish()
             case .unavailable:
                 self?.fail(slot, .sourceUnavailable)
@@ -439,17 +534,30 @@ public final class PlaybackSession {
     }
 
     private func install(_ media: PlaybackMedia, source: PlaybackSource, in slot: Slot) {
+        log(.debug, .mediaResolved, itemID: slot.item.id,
+            fields: ["cacheHit": String(media.isCached), "purpose": String(describing: slot.purpose)])
         slot.source = source
         slot.media = media
         slot.phase = .installed
         slot.started = false
         slot.warmed = false
-        slot.driver.load(media.url)
+        slot.driver.load(media.url, preferences: streamPreferences)
         emit(.presentationChanged(slot.item.id))
         driverChanged(slot)
     }
 
     private func fail(_ slot: Slot, _ failure: PlaybackFailure) {
+        log(slot.item.id == selectedID ? .error : .warning, .playbackFailed, itemID: slot.item.id,
+            fields: ["reason": String(describing: failure), "purpose": String(describing: slot.purpose)])
+        slot.work?.cancel()
+        slot.work = nil
+        cancelLoadDeadline(for: slot)
+        if slot.item.id == selectedID {
+            cancelSeek()
+            scrubPosition = nil
+        }
+        slot.initialSeek?.cancel()
+        slot.initialSeek = nil
         slot.phase = .failed(failure)
         slot.started = false
         slot.driver.clear()
@@ -464,10 +572,14 @@ public final class PlaybackSession {
             return
         }
         if slot.driver.status == .ready {
-            if !slot.isPositioned { positionInitially(slot) }
-            else if slot.item.id != selectedID, !slot.warmed, active, suspensions.isEmpty {
-                slot.warmed = true
-                slot.driver.warm()
+            if !slot.isPositioned {
+                positionInitially(slot)
+            } else {
+                cancelLoadDeadline(for: slot)
+                if slot.item.id != selectedID, !slot.warmed, active, suspensions.isEmpty {
+                    slot.warmed = true
+                    slot.driver.warm()
+                }
             }
         }
         let frame = isFrameReady(slot)
@@ -502,6 +614,7 @@ public final class PlaybackSession {
         slot.ended = true
         slot.started = false
         slot.driver.pause()
+        finishAttempt(.completed)
         emit(.ended(slot.item.id))
         switch configuration.endBehavior {
         case .loop where canPlay:
@@ -558,15 +671,52 @@ public final class PlaybackSession {
         return max(0, min(position, slot.driver.duration ?? position))
     }
 
+    private func armLoadDeadline(for slot: Slot) {
+        cancelLoadDeadline(for: slot)
+        guard let timeout = configuration.loadTimeout else { return }
+        slot.deadline = Task { [weak self, weak slot] in
+            do { try await Task.sleep(for: .seconds(timeout)) }
+            catch { return }
+            guard let self, let slot, self.isCurrent(slot), !Task.isCancelled else { return }
+            self.log(.warning, .loadTimedOut, itemID: slot.item.id, fields: [
+                "timeoutSeconds": String(timeout), "purpose": String(describing: slot.purpose)
+            ])
+            switch slot.phase {
+            case .resolving:
+                self.fail(slot, slot.source == nil ? .sourceUnavailable : .playbackFailed)
+            case .installed:
+                self.recover(slot)
+            case .accessRequired, .failed:
+                return
+            }
+            if slot.item.id != self.selectedID { self.reconcileWindow() }
+        }
+    }
+
+    private func cancelLoadDeadline(for slot: Slot) {
+        slot.deadline?.cancel()
+        slot.deadline = nil
+    }
+
     private func recover(_ slot: Slot) {
         guard slot.item.id == selectedID, slot.media?.isCached == true, !slot.retriedCache,
-              let source = slot.source, source.isValid else {
+              let source = slot.source else {
             fail(slot, .playbackFailed)
             return
         }
+        guard source.isValid else {
+            fail(slot, .sourceExpired)
+            return
+        }
         slot.retriedCache = true
-        let resumePosition = slot.driver.position
+        let resumePosition = slot.isPositioned ? slot.driver.position : (slot.recoveryPosition ?? slot.item.resumePosition)
+        cancelSeek()
+        slot.initialSeek?.cancel()
+        slot.initialSeek = nil
         slot.phase = .resolving
+        armLoadDeadline(for: slot)
+        log(.warning, .cachedMediaFallback, itemID: slot.item.id)
+        if let attempt { emitDiagnostic(attempt.event(.cachedMediaFallback)) }
         slot.started = false
         slot.driver.clear()
         slot.reportedFrame = false
@@ -578,8 +728,6 @@ public final class PlaybackSession {
                 self.fail(slot, .sourceExpired)
                 return
             }
-            slot.initialSeek?.cancel()
-            slot.initialSeek = nil
             slot.recoveryPosition = resumePosition
             slot.isPositioned = resumePosition == 0
             self.install(PlaybackMedia(url: source.url), source: source, in: slot)
@@ -591,10 +739,21 @@ public final class PlaybackSession {
         guard prefetchedID != item.id else { return }
         cancelPrefetch()
         prefetchedID = item.id
-        prefetchTask = Task(priority: .utility) { [sourceProvider, cache] in
-            guard case .allowed(let source) = try? await sourceProvider.source(for: item, purpose: .preload),
-                  source.isValid, !Task.isCancelled else { return }
-            try? await cache.prefetch(source)
+        log(.debug, .prefetchRequested, itemID: item.id)
+        prefetchTask = Task(priority: .utility) { [weak self, sourceProvider, cache] in
+            defer { if !Task.isCancelled { self?.prefetchTask = nil } }
+            do {
+                let access = try await sourceProvider.source(for: item, purpose: .preload)
+                guard !Task.isCancelled else { return }
+                guard case .allowed(let source) = access, source.isValid else {
+                    self?.log(.debug, .prefetchSkipped, itemID: item.id)
+                    return
+                }
+                try await cache.prefetch(source)
+                if !Task.isCancelled { self?.log(.debug, .prefetchFinished, itemID: item.id) }
+            } catch {
+                if !Task.isCancelled { self?.log(.warning, .prefetchFailed, itemID: item.id) }
+            }
         }
     }
 
@@ -606,6 +765,7 @@ public final class PlaybackSession {
     }
 
     private func cancelPrefetch() {
+        if let id = prefetchedID, prefetchTask != nil { log(.debug, .prefetchCancelled, itemID: id) }
         prefetchTask?.cancel()
         prefetchTask = nil
         prefetchedID = nil
@@ -622,15 +782,18 @@ public final class PlaybackSession {
     private func release(_ id: String) {
         guard let slot = slots.removeValue(forKey: id) else { return }
         slot.work?.cancel()
+        cancelLoadDeadline(for: slot)
         slot.initialSeek?.cancel()
         slot.driver.onChange = nil
         slot.driver.onEnd = nil
+        slot.driver.onFailure = nil
         slot.driver.clear()
         emit(.presentationChanged(id))
     }
 
     private func publish() {
         let current = snapshot
+        updateDiagnostics(current)
         guard current != lastSnapshot else { return }
         lastSnapshot = current
         emit(.snapshot(current))
@@ -640,9 +803,70 @@ public final class PlaybackSession {
         for continuation in subscribers.values { continuation.yield(event) }
     }
 
+    private func updateDiagnostics(_ snapshot: PlaybackSnapshot) {
+        guard let id = snapshot.itemID, active, suspensions.isEmpty, wantsPlayback else {
+            finishAttempt(.interrupted)
+            return
+        }
+        switch snapshot.state {
+        case .accessRequired:
+            finishAttempt(.accessRequired)
+            return
+        case .failed(let failure):
+            finishAttempt(.failed(failure))
+            return
+        case .ended, .idle:
+            return
+        default:
+            break
+        }
+        let now = ProcessInfo.processInfo.systemUptime
+        let seeking = scrubPosition != nil || seekID != nil
+        if attempt == nil, !seeking {
+            let started = PlaybackAttempt(itemID: id, start: now)
+            attempt = started
+            emitDiagnostic(started.event(.started))
+        }
+        attempt?.update(state: snapshot.state, firstFrameReady: snapshot.firstFrameReady, seeking: seeking,
+                        now: now, emit: emitDiagnostic)
+    }
+
+    private func finishAttempt(_ outcome: PlaybackDiagnosticEvent.Outcome) {
+        guard let attempt else { return }
+        self.attempt = nil
+        attempt.finish(outcome, now: ProcessInfo.processInfo.systemUptime, emit: emitDiagnostic)
+    }
+
+    private func emitDiagnostic(_ event: PlaybackDiagnosticEvent) {
+        for continuation in diagnosticSubscribers.values { continuation.yield(event) }
+        guard logger != nil else { return }
+        let attemptID = event.attemptID.uuidString
+        switch event.kind {
+        case .started:
+            log(.info, .attemptStarted, itemID: event.itemID, fields: ["attemptID": attemptID])
+        case .firstFrame(let seconds):
+            log(.info, .firstFrame, itemID: event.itemID,
+                fields: ["attemptID": attemptID, "seconds": String(seconds)])
+        case .rebufferingEnded(let seconds, let recovered):
+            log(.warning, .rebufferingEnded, itemID: event.itemID,
+                fields: ["attemptID": attemptID, "seconds": String(seconds), "recovered": String(recovered)])
+        case .finished(let outcome):
+            log(.info, .attemptFinished, itemID: event.itemID,
+                fields: ["attemptID": attemptID, "outcome": String(describing: outcome)])
+        case .cachedMediaFallback:
+            break
+        }
+    }
+
+    private func log(_ level: PlaybackLogLevel, _ event: PlaybackLogEntry.Event, itemID: String?,
+                     fields: @autoclosure () -> [String: String] = [:]) {
+        logger?.write(level, event, sessionID: logSessionID, itemID: itemID, fields: fields)
+    }
+
     deinit {
         seekTask?.cancel()
         prefetchTask?.cancel()
         for continuation in subscribers.values { continuation.finish() }
+        for continuation in diagnosticSubscribers.values { continuation.finish() }
     }
 }

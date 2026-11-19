@@ -8,6 +8,7 @@ protocol PlaybackDriver: AnyObject {
     var layer: AVPlayerLayer { get }
     var onChange: (() -> Void)? { get set }
     var onEnd: (() -> Void)? { get set }
+    var onFailure: (() -> Void)? { get set }
     var status: DriverStatus { get }
     var position: TimeInterval { get }
     var duration: TimeInterval? { get }
@@ -15,7 +16,10 @@ protocol PlaybackDriver: AnyObject {
     var isPlaying: Bool { get }
     var isWaiting: Bool { get }
     var isFrameReady: Bool { get }
-    func load(_ url: URL)
+    func load(_ url: URL, preferences: PlaybackStreamPreferences)
+    func setStreamPreferences(_ preferences: PlaybackStreamPreferences)
+    func mediaTrackGroup(for kind: PlaybackMediaTrackKind) async -> PlaybackMediaTrackGroup?
+    func selectMediaTrack(_ selection: PlaybackMediaTrackSelection, in group: PlaybackMediaTrackGroup) -> Bool
     func play(rate: Float)
     func pause()
     func warm()
@@ -28,12 +32,15 @@ final class AVPlaybackDriver: PlaybackDriver {
     private(set) var layer: AVPlayerLayer
     var onChange: (() -> Void)?
     var onEnd: (() -> Void)?
+    var onFailure: (() -> Void)?
     private let player: AVPlayer
     private var itemObservations: [NSKeyValueObservation] = []
     private var playerObservations: [NSKeyValueObservation] = []
     private var layerObservation: NSKeyValueObservation?
     private var timeObserver: Any?
-    private var endObserver: NSObjectProtocol?
+    private var itemNotifications: [NSObjectProtocol] = []
+    private var itemGeneration = UUID()
+    private var mediaGroups: [PlaybackMediaTrackKind: AVMediaSelectionGroup] = [:]
 
     init() {
         player = AVPlayer()
@@ -79,9 +86,10 @@ final class AVPlaybackDriver: PlaybackDriver {
     var isWaiting: Bool { player.timeControlStatus == .waitingToPlayAtSpecifiedRate }
     var isFrameReady: Bool { layer.isReadyForDisplay }
 
-    func load(_ url: URL) {
+    func load(_ url: URL, preferences: PlaybackStreamPreferences) {
         clear()
         let item = AVPlayerItem(url: url)
+        apply(preferences, to: item)
         player.replaceCurrentItem(with: item)
         let display = AVPlayerLayer(player: player)
         display.videoGravity = .resizeAspectFill
@@ -106,12 +114,71 @@ final class AVPlaybackDriver: PlaybackDriver {
                 }
             }
         ]
-        endObserver = NotificationCenter.default.addObserver(
-            forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main
-        ) { [weak self, weak item] _ in
+        itemNotifications = [
+            observe(.AVPlayerItemDidPlayToEndTime, item: item) { $0.onEnd?() },
+            observe(.AVPlayerItemFailedToPlayToEndTime, item: item) { $0.onFailure?() }
+        ]
+    }
+
+    func setStreamPreferences(_ preferences: PlaybackStreamPreferences) {
+        if let item = player.currentItem { apply(preferences, to: item) }
+    }
+
+    func mediaTrackGroup(for kind: PlaybackMediaTrackKind) async -> PlaybackMediaTrackGroup? {
+        guard let item = player.currentItem else { return nil }
+        let group: AVMediaSelectionGroup
+        if let existing = mediaGroups[kind] {
+            group = existing
+        } else {
+            let characteristic: AVMediaCharacteristic = kind == .audio ? .audible : .legible
+            guard let loaded = try? await item.asset.loadMediaSelectionGroup(for: characteristic),
+                  player.currentItem === item, !Task.isCancelled else { return nil }
+            // A concurrent request may already have installed a group and handed its IDs to the host.
+            group = mediaGroups[kind] ?? loaded
+            mediaGroups[kind] = group
+        }
+        let options = group.options
+        let selected = item.currentMediaSelection.selectedMediaOption(in: group)
+        return PlaybackMediaTrackGroup(
+            kind: kind,
+            tracks: options.enumerated().map { index, option in
+                PlaybackMediaTrack(id: index, displayName: option.displayName, languageTag: option.extendedLanguageTag)
+            },
+            selectedTrackID: selected.flatMap { options.firstIndex(of: $0) },
+            allowsDisabling: group.allowsEmptySelection,
+            generation: itemGeneration
+        )
+    }
+
+    func selectMediaTrack(_ selection: PlaybackMediaTrackSelection, in group: PlaybackMediaTrackGroup) -> Bool {
+        guard group.generation == itemGeneration, let item = player.currentItem,
+              let currentGroup = mediaGroups[group.kind] else { return false }
+        switch selection {
+        case .automatic:
+            item.selectMediaOptionAutomatically(in: currentGroup)
+        case .off:
+            guard currentGroup.allowsEmptySelection else { return false }
+            item.select(nil, in: currentGroup)
+        case .track(let index):
+            let options = currentGroup.options
+            guard options.indices.contains(index) else { return false }
+            item.select(options[index], in: currentGroup)
+        }
+        return true
+    }
+
+    private func apply(_ preferences: PlaybackStreamPreferences, to item: AVPlayerItem) {
+        item.preferredPeakBitRate = preferences.preferredPeakBitRate
+        item.preferredPeakBitRateForExpensiveNetworks = preferences.preferredPeakBitRateForExpensiveNetworks
+        item.preferredForwardBufferDuration = preferences.preferredForwardBufferDuration
+    }
+
+    private func observe(_ name: Notification.Name, item: AVPlayerItem,
+                         action: @escaping @MainActor (AVPlaybackDriver) -> Void) -> NSObjectProtocol {
+        NotificationCenter.default.addObserver(forName: name, object: item, queue: .main) { [weak self, weak item] _ in
             Task { @MainActor [weak self, weak item] in
                 guard let self, let item, self.player.currentItem === item else { return }
-                self.onEnd?()
+                action(self)
             }
         }
     }
@@ -139,18 +206,20 @@ final class AVPlaybackDriver: PlaybackDriver {
 
     func clear() {
         pause()
+        itemGeneration = UUID()
+        mediaGroups.removeAll()
         layerObservation = nil
         layer.player = nil
         itemObservations.removeAll()
         player.currentItem?.cancelPendingSeeks()
-        if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
-        endObserver = nil
+        itemNotifications.forEach(NotificationCenter.default.removeObserver)
+        itemNotifications.removeAll()
         player.replaceCurrentItem(with: nil)
     }
 
     deinit {
         player.pause()
         if let timeObserver { player.removeTimeObserver(timeObserver) }
-        if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
+        itemNotifications.forEach(NotificationCenter.default.removeObserver)
     }
 }

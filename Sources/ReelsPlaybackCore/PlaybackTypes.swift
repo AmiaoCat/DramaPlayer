@@ -98,6 +98,24 @@ public struct PlaybackCacheAdapter: PlaybackMediaCache {
     public func invalidate(_ source: PlaybackSource) async { await remove(source) }
 }
 
+/// AVFoundation streaming hints. Zero leaves each decision to AVFoundation.
+public struct PlaybackStreamPreferences: Sendable, Equatable {
+    public let preferredPeakBitRate: Double
+    public let preferredPeakBitRateForExpensiveNetworks: Double
+    public let preferredForwardBufferDuration: TimeInterval
+
+    public init(preferredPeakBitRate: Double = 0, preferredPeakBitRateForExpensiveNetworks: Double = 0,
+                preferredForwardBufferDuration: TimeInterval = 0) {
+        self.preferredPeakBitRate = Self.normalized(preferredPeakBitRate)
+        self.preferredPeakBitRateForExpensiveNetworks = Self.normalized(preferredPeakBitRateForExpensiveNetworks)
+        self.preferredForwardBufferDuration = Self.normalized(preferredForwardBufferDuration)
+    }
+
+    private static func normalized(_ value: Double) -> Double {
+        value.isFinite ? max(0, value) : 0
+    }
+}
+
 public struct PlaybackConfiguration: Sendable {
     public enum Mode: Sendable { case single, vertical }
     public enum Preload: Sendable { case disabled, preparedPlayer, mediaBytes }
@@ -110,10 +128,24 @@ public struct PlaybackConfiguration: Sendable {
     public let preparedItemLimit: Int
     public let retention: TimeInterval
     public let rates: [Float]
+    public let streamPreferences: PlaybackStreamPreferences
+    /// Per-load deadline for source lookup, cache lookup, player preparation and the initial seek.
+    public let loadTimeout: TimeInterval?
+
+    // Keep the original initializer available as a function reference.
+    public init(mode: Mode, autoplay: Bool, preload: Preload, endBehavior: EndBehavior,
+                preparedItemLimit: Int, retention: TimeInterval, rates: [Float]) {
+        self.init(mode: mode, autoplay: autoplay, preload: preload, endBehavior: endBehavior,
+                  preparedItemLimit: preparedItemLimit, retention: retention, rates: rates,
+                  streamPreferences: .init())
+    }
 
     public init(mode: Mode = .single, autoplay: Bool = true, preload: Preload = .preparedPlayer,
                 endBehavior: EndBehavior = .stop, preparedItemLimit: Int = 3,
-                retention: TimeInterval = 120, rates: [Float] = [0.5, 0.75, 1, 1.25, 1.5, 2]) {
+                retention: TimeInterval = 120, rates: [Float] = [0.5, 0.75, 1, 1.25, 1.5, 2],
+                streamPreferences: PlaybackStreamPreferences = .init(), loadTimeout: TimeInterval? = nil) {
+        self.streamPreferences = streamPreferences
+        self.loadTimeout = loadTimeout.map { $0.isFinite ? min(300, max(0.1, $0)) : 30 }
         self.mode = mode
         self.autoplay = autoplay
         self.preload = preload

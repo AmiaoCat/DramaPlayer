@@ -4,8 +4,6 @@ import CoreText
 import ImageIO
 import UniformTypeIdentifiers
 
-private let width = 360
-private let height = 640
 private let fps: Int32 = 24
 private let duration = 8
 private let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
@@ -15,6 +13,10 @@ private struct Scene {
     let title: String
     let accent: CGColor
     let shadow: CGColor
+    var landscape = false
+
+    var width: Int { landscape ? 640 : 360 }
+    var height: Int { landscape ? 360 : 640 }
 }
 
 private let scenes = [
@@ -26,7 +28,11 @@ private let scenes = [
           shadow: CGColor(red: 0.02, green: 0.18, blue: 0.24, alpha: 1)),
     Scene(slug: "03", title: "BLUE HOUR",
           accent: CGColor(red: 0.70, green: 0.66, blue: 0.99, alpha: 1),
-          shadow: CGColor(red: 0.11, green: 0.10, blue: 0.25, alpha: 1))
+          shadow: CGColor(red: 0.11, green: 0.10, blue: 0.25, alpha: 1)),
+    Scene(slug: "04", title: "HORIZON",
+          accent: CGColor(red: 0.92, green: 0.78, blue: 0.48, alpha: 1),
+          shadow: CGColor(red: 0.18, green: 0.13, blue: 0.08, alpha: 1),
+          landscape: true)
 ]
 
 private func caption(_ value: String, at point: CGPoint, size: CGFloat, color: CGColor,
@@ -40,10 +46,11 @@ private func caption(_ value: String, at point: CGPoint, size: CGFloat, color: C
 }
 
 private func draw(_ scene: Scene, frame: Int, in context: CGContext) {
-    let canvas = CGRect(x: 0, y: 0, width: width, height: height)
+    let canvas = CGRect(x: 0, y: 0, width: scene.width, height: scene.height)
     let progress = CGFloat(frame) / CGFloat(duration * Int(fps))
     let phase = progress * .pi * 2
-    let center = CGPoint(x: 180 + sin(phase) * 55, y: 350 + cos(phase) * 34)
+    let center = CGPoint(x: canvas.width * (scene.landscape ? 0.68 : 0.5) + sin(phase) * 55,
+                         y: canvas.height * (350 / 640.0) + cos(phase) * 34)
     let black = CGColor(red: 0.025, green: 0.035, blue: 0.055, alpha: 1)
     let gradient = CGGradient(colorsSpace: colorSpace, colors: [scene.shadow, black] as CFArray, locations: nil)!
     context.fill(canvas)
@@ -58,7 +65,7 @@ private func draw(_ scene: Scene, frame: Int, in context: CGContext) {
     }
     context.setFillColor(scene.accent)
     context.fillEllipse(in: CGRect(x: center.x - 4, y: center.y - 4, width: 8, height: 8))
-    caption("DRAMA PLAYER / MOTION STUDIES", at: CGPoint(x: 24, y: 574),
+    caption("DRAMA PLAYER / MOTION STUDIES", at: CGPoint(x: 24, y: canvas.height - 66),
             size: 10, color: scene.accent, in: context)
     caption(scene.slug, at: CGPoint(x: 21, y: 162), size: 62,
             color: scene.accent, font: "HelveticaNeue-Bold", in: context)
@@ -67,9 +74,9 @@ private func draw(_ scene: Scene, frame: Int, in context: CGContext) {
     caption(String(format: "%05.2f / %02d SEC", Double(frame) / Double(fps), duration),
             at: CGPoint(x: 24, y: 91), size: 11, color: scene.accent, in: context)
     context.setFillColor(scene.accent.copy(alpha: 0.3)!)
-    context.fill(CGRect(x: 24, y: 73, width: 312, height: 2))
+    context.fill(CGRect(x: 24, y: 73, width: canvas.width - 48, height: 2))
     context.setFillColor(scene.accent)
-    context.fill(CGRect(x: 24, y: 73, width: 312 * progress, height: 2))
+    context.fill(CGRect(x: 24, y: 73, width: (canvas.width - 48) * progress, height: 2))
 }
 
 private func makeClip(_ scene: Scene, in directory: URL) async throws {
@@ -78,12 +85,12 @@ private func makeClip(_ scene: Scene, in directory: URL) async throws {
     if FileManager.default.fileExists(atPath: movie.path) { try FileManager.default.removeItem(at: movie) }
     let writer = try AVAssetWriter(outputURL: movie, fileType: .mp4)
     let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
-        AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: width, AVVideoHeightKey: height,
+        AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: scene.width, AVVideoHeightKey: scene.height,
         AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: 350_000]
     ])
     let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
         kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-        kCVPixelBufferWidthKey as String: width, kCVPixelBufferHeightKey as String: height,
+        kCVPixelBufferWidthKey as String: scene.width, kCVPixelBufferHeightKey as String: scene.height,
         kCVPixelBufferCGImageCompatibilityKey as String: true,
         kCVPixelBufferCGBitmapContextCompatibilityKey as String: true
     ])
@@ -114,7 +121,7 @@ private func render(_ scene: Scene, frame: Int, into buffer: CVPixelBuffer, post
     CVPixelBufferLockBaseAddress(buffer, [])
     defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
     let bitmapInfo = CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.noneSkipFirst.rawValue
-    guard let context = CGContext(data: CVPixelBufferGetBaseAddress(buffer), width: width, height: height,
+    guard let context = CGContext(data: CVPixelBufferGetBaseAddress(buffer), width: scene.width, height: scene.height,
                                   bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
                                   space: colorSpace, bitmapInfo: bitmapInfo) else {
         throw CocoaError(.fileWriteUnknown)

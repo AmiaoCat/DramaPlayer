@@ -23,6 +23,11 @@ final class DemoTemplatesViewController: UIViewController {
     private let playButton = UIButton(type: .system)
     private var observations: Task<Void, Never>?
     private var isMini = false
+    private var portraitLayout: [NSLayoutConstraint] = []
+    private var landscapeLayout: [NSLayoutConstraint] = []
+    private var formatChoices: UIStackView?
+    private var playbackActions: UIStackView?
+    private var usesSidePanel = false
 
     init?(bundle: Bundle) {
         guard let portrait = bundle.url(forResource: "01", withExtension: "mp4"),
@@ -47,7 +52,7 @@ final class DemoTemplatesViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = "Video layouts"
-        view.backgroundColor = .systemBackground
+        view.backgroundColor = DemoStyle.canvas
 
         sourcePicker.selectedSegmentIndex = 0
         sourcePicker.accessibilityLabel = "Video format"
@@ -57,11 +62,10 @@ final class DemoTemplatesViewController: UIViewController {
         }, for: .valueChanged)
         templateButton.showsMenuAsPrimaryAction = true
         templateButton.accessibilityIdentifier = "layout-template"
+        DemoStyle.styleButton(templateButton)
         updateTemplateMenu()
 
-        stage.backgroundColor = .secondarySystemBackground
-        stage.layer.cornerRadius = 12
-        stage.clipsToBounds = true
+        DemoStyle.styleSurface(stage, radius: 20)
         viewport.backgroundColor = .black
         viewport.clipsToBounds = true
         stage.addSubview(viewport)
@@ -72,11 +76,13 @@ final class DemoTemplatesViewController: UIViewController {
 
         status.font = .preferredFont(forTextStyle: .footnote)
         status.adjustsFontForContentSizeCategory = true
-        status.textColor = .secondaryLabel
+        status.textColor = DemoStyle.secondary
         status.textAlignment = .center
         status.numberOfLines = 0
         status.accessibilityIdentifier = "layout-status"
 
+        DemoStyle.styleButton(playButton)
+        DemoStyle.styleButton(toggleButton, filled: true)
         playButton.setTitle("Pause", for: .normal)
         playButton.addAction(UIAction { [weak session] _ in session?.togglePlayback() }, for: .touchUpInside)
         toggleButton.setTitle("Mini player", for: .normal)
@@ -85,29 +91,52 @@ final class DemoTemplatesViewController: UIViewController {
             setMini(!isMini)
         }, for: .touchUpInside)
         let sizeButton = UIButton(type: .system)
+        DemoStyle.styleButton(sizeButton)
         sizeButton.setTitle("Custom size", for: .normal)
         sizeButton.addAction(UIAction { [weak self] _ in self?.promptForSize() }, for: .touchUpInside)
 
         let playbackRow = UIStackView(arrangedSubviews: [playButton, toggleButton, sizeButton])
         playbackRow.distribution = .fillEqually
+        playbackRow.spacing = 8
+        for button in [playButton, toggleButton, sizeButton] {
+            button.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+        }
         let choices = UIStackView(arrangedSubviews: [sourcePicker, templateButton])
         choices.alignment = .center
         choices.distribution = .fillEqually
         choices.spacing = 8
-        let stack = UIStackView(arrangedSubviews: [choices, status, stage, playbackRow])
-        stack.axis = .vertical
-        stack.spacing = 6
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(stack)
+        let settings = DemoStyle.panel([choices, status], spacing: 5, inset: 10)
+        formatChoices = choices
+        playbackActions = playbackRow
+        for element in [settings, stage, playbackRow] {
+            element.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(element)
+        }
         let safe = view.safeAreaLayoutGuide
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: safe.topAnchor, constant: 8),
-            stack.leadingAnchor.constraint(equalTo: safe.leadingAnchor, constant: 12),
-            stack.trailingAnchor.constraint(equalTo: safe.trailingAnchor, constant: -12),
-            stack.bottomAnchor.constraint(equalTo: safe.bottomAnchor, constant: -4),
+            stage.leadingAnchor.constraint(equalTo: safe.leadingAnchor, constant: 12),
+            settings.topAnchor.constraint(equalTo: safe.topAnchor, constant: 8),
+            settings.trailingAnchor.constraint(equalTo: safe.trailingAnchor, constant: -12),
+            playbackRow.trailingAnchor.constraint(equalTo: settings.trailingAnchor),
+            playbackRow.leadingAnchor.constraint(equalTo: settings.leadingAnchor),
             choices.heightAnchor.constraint(greaterThanOrEqualToConstant: 34),
             playbackRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 44)
         ])
+        portraitLayout = [
+            settings.leadingAnchor.constraint(equalTo: stage.leadingAnchor),
+            stage.trailingAnchor.constraint(equalTo: settings.trailingAnchor),
+            stage.topAnchor.constraint(equalTo: settings.bottomAnchor, constant: 10),
+            stage.bottomAnchor.constraint(equalTo: playbackRow.topAnchor, constant: -10),
+            playbackRow.bottomAnchor.constraint(equalTo: safe.bottomAnchor, constant: -4)
+        ]
+        landscapeLayout = [
+            settings.widthAnchor.constraint(equalToConstant: 224),
+            stage.trailingAnchor.constraint(equalTo: settings.leadingAnchor, constant: -10),
+            stage.topAnchor.constraint(equalTo: settings.topAnchor),
+            stage.bottomAnchor.constraint(equalTo: safe.bottomAnchor, constant: -4),
+            playbackRow.topAnchor.constraint(equalTo: settings.bottomAnchor, constant: 10)
+        ]
+        NSLayoutConstraint.activate(portraitLayout)
         mountPlayer(in: viewport)
         updateStatus()
 
@@ -122,6 +151,17 @@ final class DemoTemplatesViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        let sizeClass = view.safeAreaLayoutGuide.layoutFrame.size
+        let wide = sizeClass.width >= 590 && sizeClass.width > sizeClass.height
+        if usesSidePanel != wide {
+            usesSidePanel = wide
+            NSLayoutConstraint.deactivate(wide ? portraitLayout : landscapeLayout)
+            formatChoices?.axis = wide ? .vertical : .horizontal
+            formatChoices?.alignment = wide ? .fill : .center
+            playbackActions?.axis = wide ? .vertical : .horizontal
+            NSLayoutConstraint.activate(wide ? landscapeLayout : portraitLayout)
+            view.layoutIfNeeded()
+        }
         let size = template.fittedSize(in: stage.bounds.size)
         viewport.frame = CGRect(x: stage.bounds.midX - size.width / 2,
                                 y: stage.bounds.midY - size.height / 2, width: size.width, height: size.height)

@@ -53,6 +53,8 @@ let session = PlaybackSession(
 | `isLandscapeAdjustmentEnabled` | UIKit 播放视图默认关闭。启用后在横向窗口的横向播放区上下滑，左侧调当前屏幕亮度，右侧调会话播放音量。进度条等原生控件保持独立。竖滑列表中间 20% 留给翻页。 |
 | `setVolume(_:)` | 会话音量默认 `1`，有限值限制在 `0...1`，切集和预加载播放器复用时继续生效。它调整相对于系统音量的播放器增益。 [Apple AVPlayer 音量说明](https://developer.apple.com/documentation/avfoundation/avplayer/volume) |
 | `coverLoader` | 默认从本地或 HTTP(S) URL 加载图片。对大量系统剧集封面，注入宿主的图片缓存与解码流程。 |
+| `coverState` / `onCoverStateChange` | `PlaybackVideoView` 和 `SinglePlaybackView` 提供封面状态及回调，独立于视频状态。缺失和失败用占位图。首帧到达时会取消仍在进行的封面请求。 |
+| `retryCoverLoading()` | 封面仍可见且上次加载失败时单独重试封面，视频会话和进度继续保留。 |
 | `PlaybackLayoutTemplate.presets` | 6 个比例乘以 Fit 和 Fill，共 12 套。通过 `fittedSize(in:)` 获取容器尺寸；设置播放器的 `scaling` 后，视图会按对应方式呈现。 |
 | `PlaybackMiniPlayerView.preferredSize` | 默认 240 × 180 pt，包含标题拖动区。用 `setPreferredSize(_:)` 传入正且有限的宽高。可见尺寸受可用空间约束，正常空间下最小 152 × 112 pt。 |
 | `layout(in:)` | 每次宿主重新布局时传入父视图坐标系中的安全区和留白范围。将现有播放器视图移入 `contentView`，展开时移回原容器，保留会话与进度。 |

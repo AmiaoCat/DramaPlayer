@@ -11,6 +11,15 @@ public final class SinglePlaybackView: UIView {
     private var events: Task<Void, Never>?
     private var landscapeGestures: PlaybackLandscapeGestures?
 
+    public var coverState: PlaybackCoverState { video.coverState }
+
+    public var onCoverStateChange: ((PlaybackCoverState) -> Void)? {
+        get { video.onCoverStateChange }
+        set { video.onCoverStateChange = newValue }
+    }
+
+    public func retryCoverLoading() { video.retryCoverLoading() }
+
     public var isLandscapeAdjustmentEnabled: Bool {
         get { landscapeGestures?.isEnabled ?? false }
         set {
@@ -152,6 +161,11 @@ public final class VerticalPlaybackView: UIView, UICollectionViewDataSource, UIC
     public func collectionView(_ collectionView: UICollectionView, willDisplay cell: UICollectionViewCell,
                                forItemAt indexPath: IndexPath) {
         if let page = cell as? Page { render(page, at: indexPath) }
+    }
+
+    public func collectionView(_ collectionView: UICollectionView, didEndDisplaying cell: UICollectionViewCell,
+                               forItemAt indexPath: IndexPath) {
+        (cell as? Page)?.video?.display(nil, presentation: nil)
     }
 
     public func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout,

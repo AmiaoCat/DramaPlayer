@@ -33,6 +33,7 @@ DramaPlayer 面向 iOS 16+ 的 UIKit 项目，提供单视频播放和竖滑剧�
 | 场景 | 操作与预期结果 | 对应接口 |
 | --- | --- | --- |
 | Single video | 点击视频暂停，拖动进度条或切换倍速。片段播完后循环。 | `SinglePlaybackView`、`.loop` |
+| Cover loading | 从 **Cases** 切换封面慢、失败、缺失或首帧先到的情况，观察占位和封面状态。 | `PlaybackCoverState`、`onCoverStateChange` |
 | Landscape video | 横屏后在画面左侧上下滑调亮度，右侧上下滑调播放音量。内置样片静音，可用 Apple HLS 样片试听音量变化。 | `isLandscapeAdjustmentEnabled`、`setVolume(_:)` |
 | Video layouts | 横版和竖版样片可切换 12 套布局。打开 **Mini player** 后拖动顶部或右下角，也可在 **Custom size** 分别输入宽和高。 | `PlaybackLayoutTemplate.presets`、`PlaybackMiniPlayerView` |
 | Vertical feed | 上下滑动或点击 **Episodes** 跳集。播完自动进入下一集，末集播完停止。 | `VerticalPlaybackView`、`select(_:)`、`.preparedPlayer`、`.advance` |

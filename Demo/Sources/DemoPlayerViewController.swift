@@ -10,7 +10,7 @@ import ReelsPlaybackUIKit
 @MainActor
 final class DemoPlayerViewController: UIViewController {
     enum Mode: Equatable {
-        case single, landscape, feed, custom, access, remote(URL)
+        case single, landscape, feed, custom, cover, access, remote(URL)
 
         var title: String {
             switch self {
@@ -18,6 +18,7 @@ final class DemoPlayerViewController: UIViewController {
             case .landscape: "Landscape video"
             case .feed: "Vertical feed"
             case .custom: "Custom controls"
+            case .cover: "Cover loading"
             case .access: "Episode access"
             case .remote: "Remote playback"
             }
@@ -29,6 +30,7 @@ final class DemoPlayerViewController: UIViewController {
             case .landscape: "Rotate the phone to see the same video in a wider layout."
             case .feed: "Swipe or use Episodes to jump to another clip."
             case .custom: "Press Play to start from the saved position."
+            case .cover: "Use Cases to compare slow, failed, missing, and first-frame-first covers."
             case .access: "Episode 2 starts locked. Unlock it to continue."
             case .remote: "Use Retry if loading fails. Go back to try a different URL."
             }
@@ -38,7 +40,7 @@ final class DemoPlayerViewController: UIViewController {
 
         var configuration: PlaybackConfiguration {
             switch self {
-            case .single, .landscape: .init(mode: .single, endBehavior: .loop, loadTimeout: 30)
+            case .single, .landscape, .cover: .init(mode: .single, endBehavior: .loop, loadTimeout: 30)
             case .feed, .access: .init(mode: .vertical, preload: .preparedPlayer, endBehavior: .advance, loadTimeout: 30)
             case .custom: .init(autoplay: false, loadTimeout: 30)
             case .remote: .init(loadTimeout: 30)
@@ -51,6 +53,8 @@ final class DemoPlayerViewController: UIViewController {
     private let lifecycle: PlaybackLifecycle
     private let access: DemoEpisodeAccess
     private let status = UILabel()
+    private let playbackDetail = DemoStyle.label(style: .caption1, color: DemoStyle.secondary)
+    private let coverStatus = UILabel()
     private lazy var customVideo = PlaybackVideoView()
     private let progress = UILabel()
     private let completion = UILabel()
@@ -62,6 +66,9 @@ final class DemoPlayerViewController: UIViewController {
     private weak var feedView: VerticalPlaybackView?
     private var customLandscapeGestures: PlaybackLandscapeGestures?
     private let help = UILabel()
+    private let workspace = UIStackView()
+    private var inspectorWidth: NSLayoutConstraint?
+    private var landscapeStageHeight: NSLayoutConstraint?
 
     init?(mode: Mode) {
         self.mode = mode
@@ -71,6 +78,15 @@ final class DemoPlayerViewController: UIViewController {
         if case .remote(let url) = mode {
             items = [PlaybackItem(id: "remote")]
             urls = ["remote": url]
+        } else if mode == .cover {
+            guard let video = Bundle.main.url(forResource: "01", withExtension: "mp4") else { return nil }
+            items = [
+                .init(id: "slow", coverURL: Bundle.main.url(forResource: "01", withExtension: "jpg")),
+                .init(id: "failed", coverURL: video.deletingLastPathComponent().appendingPathComponent("unavailable.jpg")),
+                .init(id: "no-cover"),
+                .init(id: "frame-first", coverURL: Bundle.main.url(forResource: "03", withExtension: "jpg"))
+            ]
+            urls = Dictionary(uniqueKeysWithValues: items.map { ($0.id, video) })
         } else {
             let ids = mode.isVertical ? ["01", "02", "03"] : [mode == .landscape ? "04" : "01"]
             let movies = ids.compactMap { id in
@@ -86,10 +102,14 @@ final class DemoPlayerViewController: UIViewController {
 
         let access = DemoEpisodeAccess(lockedID: mode == .access ? "02" : nil)
         self.access = access
+        let isCoverDemo = mode == .cover
         let resolver = PlaybackSourceResolver { item, _ in
             guard let url = urls[item.id] else { return .unavailable }
             // Playback and preload both check the same entitlement. The UI owns the unlock flow.
             guard await access.canPlay(item.id) else { return .requiresUserAction }
+            if isCoverDemo, item.id != "frame-first" {
+                try await Task.sleep(for: .seconds(4))
+            }
             return .allowed(.init(url: url, cacheKey: "demo/\(item.id)"))
         }
         session = PlaybackSession(configuration: mode.configuration, sourceProvider: resolver, logger: DemoLogging.logger)
@@ -103,7 +123,7 @@ final class DemoPlayerViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = mode.title
-        view.backgroundColor = .black
+        view.backgroundColor = DemoStyle.canvas
 
         let player: UIView
         if mode.isVertical {
@@ -119,20 +139,26 @@ final class DemoPlayerViewController: UIViewController {
             player = customVideo
             customLandscapeGestures = PlaybackLandscapeGestures(session: session, surface: customVideo)
         } else {
-            let single = SinglePlaybackView(session: session, scaling: .fit)
+            let loader: any PlaybackCoverLoader = mode == .cover ? DemoCoverLoader() : URLPlaybackCoverLoader()
+            let single = SinglePlaybackView(session: session, coverLoader: loader, scaling: .fit)
             single.isLandscapeAdjustmentEnabled = true
+            if mode == .cover { installCoverDemo(on: single) }
             player = single
         }
 
         configureLabel(help, color: .secondaryLabel)
         help.text = mode.help
-        configureLabel(status, color: .systemMint)
+        status.font = .preferredFont(forTextStyle: .headline)
+        status.adjustsFontForContentSizeCategory = true
+        status.numberOfLines = 0
         status.accessibilityIdentifier = "playback-status"
 
+        DemoStyle.styleButton(recovery, filled: true)
         recovery.addAction(UIAction { [weak self] _ in self?.recoverPlayback() }, for: .touchUpInside)
         recovery.isHidden = true
-        var arrangedViews: [UIView] = [help, status, recovery, player]
+        var arrangedViews: [UIView] = [status, playbackDetail, help, recovery]
         if mode == .custom { arrangedViews.append(makeCustomControls()) }
+        if mode == .cover { arrangedViews.insert(coverStatus, at: 2) }
         if case .remote = mode {
             let diagnostics = UILabel()
             configureLabel(diagnostics, color: .secondaryLabel)
@@ -143,17 +169,29 @@ final class DemoPlayerViewController: UIViewController {
             installStreamingMenu()
         }
 
-        let stack = UIStackView(arrangedSubviews: arrangedViews)
-        stack.axis = .vertical
-        stack.spacing = 8
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(stack)
+        let inspector = DemoStyle.panel(arrangedViews, spacing: 5, inset: 12)
+        let stage = UIView()
+        DemoStyle.styleSurface(stage, radius: 20, color: .black)
+        player.translatesAutoresizingMaskIntoConstraints = false
+        stage.addSubview(player)
+        workspace.addArrangedSubview(stage)
+        workspace.addArrangedSubview(inspector)
+        workspace.axis = .vertical
+        workspace.spacing = 10
+        workspace.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(workspace)
         let safeArea = view.safeAreaLayoutGuide
+        inspectorWidth = inspector.widthAnchor.constraint(equalToConstant: 240)
+        landscapeStageHeight = stage.heightAnchor.constraint(equalTo: workspace.heightAnchor)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: safeArea.topAnchor, constant: 4),
-            stack.leadingAnchor.constraint(equalTo: safeArea.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: safeArea.trailingAnchor),
-            stack.bottomAnchor.constraint(equalTo: safeArea.bottomAnchor)
+            workspace.topAnchor.constraint(equalTo: safeArea.topAnchor, constant: 4),
+            workspace.leadingAnchor.constraint(equalTo: safeArea.leadingAnchor, constant: 12),
+            workspace.trailingAnchor.constraint(equalTo: safeArea.trailingAnchor, constant: -12),
+            workspace.bottomAnchor.constraint(equalTo: safeArea.bottomAnchor, constant: -6),
+            player.topAnchor.constraint(equalTo: stage.topAnchor),
+            player.leadingAnchor.constraint(equalTo: stage.leadingAnchor),
+            player.trailingAnchor.constraint(equalTo: stage.trailingAnchor),
+            player.bottomAnchor.constraint(equalTo: stage.bottomAnchor)
         ])
 
         render(session.snapshot)
@@ -175,12 +213,46 @@ final class DemoPlayerViewController: UIViewController {
         }
     }
 
+    private func installCoverDemo(on player: SinglePlaybackView) {
+        configureLabel(coverStatus, color: .secondaryLabel)
+        coverStatus.accessibilityIdentifier = "cover-status"
+        player.onCoverStateChange = { [weak coverStatus] state in
+            coverStatus?.text = switch state {
+            case .noCover: "Cover: none"
+            case .idle: "Cover: not needed"
+            case .loading: "Cover: loading"
+            case .loaded: "Cover: loaded"
+            case .failed: "Cover: unavailable"
+            }
+        }
+        player.onCoverStateChange?(player.coverState)
+        let cases = [
+            ("Slow cover", "slow"), ("Failed cover", "failed"),
+            ("No cover", "no-cover"), ("Video arrives first", "frame-first")
+        ]
+        let actions = cases.map { title, id in
+            UIAction(title: title) { [weak session] _ in session?.select(id) }
+        }
+        navigationItem.rightBarButtonItem = UIBarButtonItem(title: "Cases", menu: UIMenu(children: actions))
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         let guidance = mode.isVertical ? "Swipe left/right sides vertically to adjust · Center to page"
             : "Slide up or down · Left for brightness · Right for volume"
         let helpText = view.bounds.width > view.bounds.height ? guidance : mode.help
         if help.text != helpText { help.text = helpText }
+        let safeSize = view.safeAreaLayoutGuide.layoutFrame.size
+        let wide = safeSize.width > safeSize.height && safeSize.width >= 590
+        let axis: NSLayoutConstraint.Axis = wide ? .horizontal : .vertical
+        if workspace.axis != axis {
+            inspectorWidth?.isActive = false
+            landscapeStageHeight?.isActive = false
+            workspace.axis = axis
+            workspace.alignment = wide ? .top : .fill
+            inspectorWidth?.isActive = wide
+            landscapeStageHeight?.isActive = wide
+        }
         if let feed = feedView, feed.bounds.height > 0 {
             // Keep portrait material intact in wide windows, including the unfolded display.
             feed.scaling = feed.bounds.width / feed.bounds.height > 0.7 ? .fit : .fill
@@ -201,6 +273,8 @@ final class DemoPlayerViewController: UIViewController {
         configureLabel(progress, color: .label)
         configureLabel(completion, color: .secondaryLabel)
         completion.isHidden = true
+        DemoStyle.styleButton(playPause, filled: true)
+        DemoStyle.styleButton(skip)
         playPause.addAction(UIAction { [weak session] _ in session?.togglePlayback() }, for: .touchUpInside)
         skip.setTitle("+5 seconds", for: .normal)
         skip.addAction(UIAction { [weak session] _ in
@@ -209,6 +283,7 @@ final class DemoPlayerViewController: UIViewController {
         }, for: .touchUpInside)
         let buttons = UIStackView(arrangedSubviews: [playPause, skip])
         buttons.distribution = .fillEqually
+        buttons.spacing = 8
         let controls = UIStackView(arrangedSubviews: [progress, completion, buttons])
         controls.axis = .vertical
         controls.spacing = 4
@@ -222,7 +297,7 @@ final class DemoPlayerViewController: UIViewController {
         label.font = .preferredFont(forTextStyle: .caption1)
         label.adjustsFontForContentSizeCategory = true
         label.textColor = color
-        label.textAlignment = .center
+        label.textAlignment = .natural
         label.numberOfLines = 0
         label.setContentCompressionResistancePriority(.required, for: .vertical)
     }
@@ -307,15 +382,19 @@ final class DemoPlayerViewController: UIViewController {
         case .failed(.playbackFailed): state = "Playback failed"
         }
         let frame = snapshot.firstFrameReady ? "First frame ready" : "No first frame"
-        status.text = "\(snapshot.itemID ?? "—")  ·  \(state)  ·  \(frame)"
+        status.text = state
+        playbackDetail.text = "\(snapshot.itemID.map { "Clip \($0)" } ?? "No clip")  ·  \(frame)"
         switch snapshot.state {
         case .accessRequired:
+            status.textColor = .systemOrange
             recovery.setTitle("Unlock episode", for: .normal)
             recovery.isHidden = false
         case .failed:
+            status.textColor = .systemRed
             recovery.setTitle("Retry playback", for: .normal)
             recovery.isHidden = false
         default:
+            status.textColor = snapshot.state == .playing ? .systemMint : .label
             recovery.isHidden = true
         }
 
@@ -361,6 +440,15 @@ final class DemoPlayerViewController: UIViewController {
     deinit {
         observations?.cancel()
         diagnosticObservations?.cancel()
+    }
+}
+
+private struct DemoCoverLoader: PlaybackCoverLoader {
+    func image(for url: URL) async -> UIImage? {
+        let delay: Duration = url.lastPathComponent == "03.jpg" ? .seconds(6) : .seconds(1)
+        do { try await Task.sleep(for: delay) }
+        catch { return nil }
+        return await URLPlaybackCoverLoader().image(for: url)
     }
 }
 

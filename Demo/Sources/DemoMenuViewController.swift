@@ -1,85 +1,229 @@
 import UIKit
 
 final class DemoMenuViewController: UIViewController {
+    private let groups = UIStackView()
+
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "DramaPlayer"
-        view.backgroundColor = UIColor(red: 0.04, green: 0.07, blue: 0.10, alpha: 1)
+        navigationItem.backButtonDisplayMode = .minimal
+        view.backgroundColor = DemoStyle.canvas
 
-        let eyebrow = UILabel()
-        eyebrow.font = .monospacedSystemFont(ofSize: 13, weight: .semibold)
-        eyebrow.textColor = .systemMint
-        eyebrow.text = "AVFOUNDATION  /  UIKIT"
+        let featured = makeFeaturedFeed()
+        let quick = UIStackView(arrangedSubviews: [
+            compactCard("Single video", detail: "Loop and seek", icon: "play.rectangle") { [weak self] in self?.open(.single) },
+            compactCard("Landscape video", detail: "Rotate and adjust", icon: "rectangle.landscape.rotate") { [weak self] in
+                self?.open(.landscape)
+            }
+        ])
+        quick.spacing = 10
+        quick.distribution = .fillEqually
 
-        let heading = UILabel()
-        heading.font = .preferredFont(forTextStyle: .largeTitle).bold()
-        heading.adjustsFontForContentSizeCategory = true
-        heading.numberOfLines = 0
-        heading.text = "Playback lab"
+        let tools = section("Playback tools", rows: [
+            row("Video layouts", detail: "12 templates and a resizable mini player", icon: "pip") { [weak self] in
+                self?.pushDemo(DemoTemplatesViewController(bundle: .main))
+            },
+            row("Custom controls", detail: "Resume, skip ahead, and replay", icon: "slider.horizontal.3") { [weak self] in
+                self?.open(.custom)
+            }
+        ])
+        let labs = section("Integration labs", rows: [
+            row("Cover loading", detail: "Test missing artwork and first-frame timing", icon: "photo") { [weak self] in
+                self?.open(.cover)
+            },
+            row("Cache policies", detail: "Compare prefetch, reuse, and cache hits", icon: "internaldrive") { [weak self] in
+                self?.pushDemo(DemoCacheViewController(bundle: .main))
+            },
+            row("Episode access", detail: "Unlock an episode and retry playback", icon: "lock.open") { [weak self] in
+                self?.open(.access)
+            },
+            row("Remote playback", detail: "Play your HTTPS stream or Apple's HLS sample", icon: "antenna.radiowaves.left.and.right") { [weak self] in
+                self?.promptForURL()
+            }
+        ])
+        groups.axis = .vertical
+        groups.alignment = .fill
+        groups.spacing = 20
+        groups.addArrangedSubview(tools)
+        groups.addArrangedSubview(labs)
 
-        let introduction = UILabel()
-        introduction.font = .preferredFont(forTextStyle: .body)
-        introduction.adjustsFontForContentSizeCategory = true
-        introduction.textColor = .secondaryLabel
-        introduction.numberOfLines = 0
-        introduction.text = "Try playback, episode access, and caching with bundled clips, or test your own HTTPS video."
-
-        let single = makeButton("Single video", subtitle: "Loop, seek, and change speed", icon: "play.rectangle") { [weak self] in
-            self?.open(.single)
-        }
-        let landscape = makeButton("Landscape video", subtitle: "Rotate the screen while a 16:9 clip plays",
-                                   icon: "rectangle.landscape.rotate") { [weak self] in
-            self?.open(.landscape)
-        }
-        let templates = makeButton("Video layouts", subtitle: "Try 12 templates and a resizable mini player",
-                                   icon: "pip") { [weak self] in
-            self?.pushDemo(DemoTemplatesViewController(bundle: .main))
-        }
-        let feed = makeButton("Vertical feed", subtitle: "Swipe through three clips and revisit a prepared clip",
-                              icon: "rectangle.portrait.on.rectangle.portrait") { [weak self] in
-            self?.open(.feed)
-        }
-        let custom = makeButton("Custom controls", subtitle: "Resume from a saved position and control playback",
-                                icon: "slider.horizontal.3") { [weak self] in
-            self?.open(.custom)
-        }
-        let access = makeButton("Episode access", subtitle: "Unlock a gated episode and retry playback",
-                                icon: "lock.open") { [weak self] in
-            self?.open(.access)
-        }
-        let cache = makeButton("Cache policies", subtitle: "Compare player preparation, disk prefetch, and on-demand playback",
-                               icon: "internaldrive") { [weak self] in
-            self?.pushDemo(DemoCacheViewController(bundle: .main))
-        }
-        let remote = makeButton("Remote playback", subtitle: "Try an HTTPS MP4 or HLS URL",
-                                icon: "link") { [weak self] in
-            self?.promptForURL()
-        }
-
-        let stack = UIStackView(arrangedSubviews: [eyebrow, heading, introduction, single, landscape, templates, feed, custom, access, cache, remote])
+        let stack = UIStackView(arrangedSubviews: [makeMasthead(), featured, quick, groups])
         stack.axis = .vertical
         stack.spacing = 12
-        stack.setCustomSpacing(28, after: introduction)
+        stack.setCustomSpacing(20, after: quick)
         stack.translatesAutoresizingMaskIntoConstraints = false
         let scroll = UIScrollView()
         scroll.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(scroll)
         scroll.addSubview(stack)
-        let preferredWidth = stack.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor, constant: -48)
+        let preferredWidth = stack.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor, constant: -36)
         preferredWidth.priority = .defaultHigh
+        let safeArea = view.safeAreaLayoutGuide
         NSLayoutConstraint.activate([
-            scroll.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            scroll.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
-            scroll.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
-            stack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: 36),
+            scroll.topAnchor.constraint(equalTo: safeArea.topAnchor),
+            scroll.leadingAnchor.constraint(equalTo: safeArea.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: safeArea.trailingAnchor),
+            scroll.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            stack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: 14),
             scroll.contentLayoutGuide.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor),
             stack.centerXAnchor.constraint(equalTo: scroll.contentLayoutGuide.centerXAnchor),
             stack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -24),
-            stack.widthAnchor.constraint(lessThanOrEqualToConstant: 560),
-            stack.widthAnchor.constraint(lessThanOrEqualTo: scroll.frameLayoutGuide.widthAnchor, constant: -48),
+            stack.widthAnchor.constraint(lessThanOrEqualToConstant: 880),
+            stack.widthAnchor.constraint(lessThanOrEqualTo: scroll.frameLayoutGuide.widthAnchor, constant: -36),
             preferredWidth
         ])
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        navigationController?.setNavigationBarHidden(true, animated: animated)
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        let wide = view.safeAreaLayoutGuide.layoutFrame.width >= 700
+        let axis: NSLayoutConstraint.Axis = wide ? .horizontal : .vertical
+        guard groups.axis != axis else { return }
+        groups.axis = axis
+        groups.alignment = wide ? .top : .fill
+        groups.distribution = wide ? .fillEqually : .fill
+    }
+
+    private func makeMasthead() -> UIView {
+        let brand = DemoStyle.label("DramaPlayer", style: .title2, weight: .bold)
+        brand.accessibilityTraits.insert(.header)
+        let subtitle = DemoStyle.label("Short Drama Player SDK", style: .footnote, weight: .medium, color: DemoStyle.secondary)
+        let name = UIStackView(arrangedSubviews: [brand, subtitle])
+        name.axis = .vertical
+        name.spacing = 1
+        let masthead = UIStackView(arrangedSubviews: [iconView("play.fill", size: 41), name, UIView()])
+        masthead.alignment = .center
+        masthead.spacing = 11
+        masthead.accessibilityIdentifier = "demo-masthead"
+        return masthead
+    }
+
+    private func makeFeaturedFeed() -> UIView {
+        let card = UIView()
+        DemoStyle.styleSurface(card, radius: 24)
+        let artwork = FeaturedArtworkView()
+        artwork.translatesAutoresizingMaskIntoConstraints = false
+        card.addSubview(artwork)
+
+        let title = DemoStyle.label("Vertical feed", style: .largeTitle, weight: .bold, color: .white)
+        title.accessibilityTraits.insert(.header)
+        let description = DemoStyle.label("Swipe between episodes. See how prepared clips resume.", style: .subheadline,
+                                          weight: .medium, color: UIColor(white: 0.9, alpha: 1))
+        let launch = UIButton(type: .system)
+        DemoStyle.styleButton(launch, filled: true)
+        var style = launch.configuration
+        style?.title = "Open feed"
+        style?.image = UIImage(systemName: "play.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 11))
+        style?.imagePadding = 8
+        launch.configuration = style
+        launch.accessibilityIdentifier = "open-featured-feed"
+        launch.addAction(UIAction { [weak self] _ in self?.open(.feed) }, for: .touchUpInside)
+
+        let text = UIStackView(arrangedSubviews: [title, description, launch])
+        text.axis = .vertical
+        text.alignment = .leading
+        text.spacing = 5
+        text.setCustomSpacing(13, after: description)
+        text.translatesAutoresizingMaskIntoConstraints = false
+        card.addSubview(text)
+        let readableWidth = text.widthAnchor.constraint(equalTo: card.widthAnchor, multiplier: 0.64)
+        readableWidth.priority = .defaultHigh
+        let preferredHeight = card.heightAnchor.constraint(equalToConstant: 224)
+        preferredHeight.priority = UILayoutPriority(760)
+        title.setContentCompressionResistancePriority(.required, for: .vertical)
+        description.setContentCompressionResistancePriority(.required, for: .vertical)
+        NSLayoutConstraint.activate([
+            artwork.topAnchor.constraint(equalTo: card.topAnchor),
+            artwork.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+            artwork.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+            artwork.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+            text.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 18),
+            text.trailingAnchor.constraint(lessThanOrEqualTo: card.trailingAnchor, constant: -18),
+            text.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -17),
+            text.topAnchor.constraint(greaterThanOrEqualTo: card.topAnchor, constant: 20),
+            card.heightAnchor.constraint(greaterThanOrEqualToConstant: 224),
+            preferredHeight,
+            launch.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            readableWidth
+        ])
+        return card
+    }
+
+    private func section(_ title: String, rows: [UIControl]) -> UIView {
+        let heading = DemoStyle.label(title, style: .title3, weight: .bold)
+        heading.accessibilityTraits.insert(.header)
+        let list = UIStackView()
+        list.axis = .vertical
+        DemoStyle.styleSurface(list)
+        for (index, row) in rows.enumerated() {
+            if index > 0 {
+                let line = UIView()
+                line.backgroundColor = DemoStyle.divider
+                line.heightAnchor.constraint(equalToConstant: 1).isActive = true
+                list.addArrangedSubview(line)
+            }
+            list.addArrangedSubview(row)
+        }
+        let section = UIStackView(arrangedSubviews: [heading, list])
+        section.axis = .vertical
+        section.spacing = 9
+        return section
+    }
+
+    private func row(_ title: String, detail: String, icon: String, action: @escaping () -> Void) -> UIControl {
+        let text = UIStackView(arrangedSubviews: [
+            DemoStyle.label(title, style: .subheadline, weight: .semibold),
+            DemoStyle.label(detail, style: .footnote, color: DemoStyle.secondary)
+        ])
+        text.axis = .vertical
+        text.spacing = 3
+        let chevron = UIImageView(image: UIImage(systemName: "chevron.right",
+                                                  withConfiguration: UIImage.SymbolConfiguration(pointSize: 11, weight: .semibold)))
+        chevron.tintColor = DemoStyle.secondary
+        chevron.setContentHuggingPriority(.required, for: .horizontal)
+        let content = UIStackView(arrangedSubviews: [iconView(icon, size: 35), text, chevron])
+        content.alignment = .center
+        content.spacing = 11
+        return DemoMenuItem(title: title, detail: detail, content: content, inset: 12, action: action)
+    }
+
+    private func compactCard(_ title: String, detail: String, icon: String, action: @escaping () -> Void) -> UIControl {
+        let labels = UIStackView(arrangedSubviews: [
+            DemoStyle.label(title, style: .subheadline, weight: .semibold),
+            DemoStyle.label(detail, style: .footnote, color: DemoStyle.secondary)
+        ])
+        labels.axis = .vertical
+        labels.spacing = 2
+        let content = UIStackView(arrangedSubviews: [iconView(icon, size: 32), labels])
+        content.axis = .vertical
+        content.alignment = .leading
+        content.spacing = 8
+        let card = DemoMenuItem(title: title, detail: detail, content: content, inset: 12, action: action)
+        DemoStyle.styleSurface(card)
+        return card
+    }
+
+    private func iconView(_ symbol: String, size: CGFloat) -> UIView {
+        let badge = UIView()
+        badge.backgroundColor = DemoStyle.accent.withAlphaComponent(0.13)
+        badge.layer.cornerRadius = size * 0.30
+        badge.layer.cornerCurve = .continuous
+        let icon = UIImageView(image: UIImage(systemName: symbol,
+                                               withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)))
+        icon.tintColor = DemoStyle.accent
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        badge.addSubview(icon)
+        NSLayoutConstraint.activate([
+            badge.widthAnchor.constraint(equalToConstant: size),
+            badge.heightAnchor.constraint(equalTo: badge.widthAnchor),
+            icon.centerXAnchor.constraint(equalTo: badge.centerXAnchor),
+            icon.centerYAnchor.constraint(equalTo: badge.centerYAnchor)
+        ])
+        return badge
     }
 
     private func promptForURL() {
@@ -129,30 +273,77 @@ final class DemoMenuViewController: UIViewController {
             present(alert, animated: true)
             return
         }
+        navigationController?.setNavigationBarHidden(false, animated: false)
         navigationController?.pushViewController(player, animated: true)
     }
 
-    private func makeButton(_ title: String, subtitle: String, icon: String,
-                            action: @escaping () -> Void) -> UIButton {
-        var style = UIButton.Configuration.filled()
-        style.title = title
-        style.subtitle = subtitle
-        style.image = UIImage(systemName: icon)
-        style.imagePadding = 12
-        style.titlePadding = 4
-        style.contentInsets = .init(top: 16, leading: 16, bottom: 16, trailing: 16)
-        style.cornerStyle = .large
-        style.baseBackgroundColor = UIColor(red: 0.13, green: 0.20, blue: 0.24, alpha: 1)
-        style.baseForegroundColor = .white
-        let button = UIButton(configuration: style, primaryAction: UIAction { _ in action() })
-        button.contentHorizontalAlignment = .leading
-        return button
-    }
 }
 
-private extension UIFont {
-    func bold() -> UIFont {
-        guard let descriptor = fontDescriptor.withSymbolicTraits(.traitBold) else { return self }
-        return UIFont(descriptor: descriptor, size: 0)
+private final class DemoMenuItem: UIControl {
+    override var isHighlighted: Bool {
+        didSet { alpha = isHighlighted ? 0.68 : 1 }
+    }
+
+    init(title: String, detail: String, content: UIView, inset: CGFloat, action: @escaping () -> Void) {
+        super.init(frame: .zero)
+        isAccessibilityElement = true
+        accessibilityTraits = .button
+        accessibilityLabel = title
+        accessibilityValue = detail
+        content.isUserInteractionEnabled = false
+        content.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(content)
+        NSLayoutConstraint.activate([
+            content.topAnchor.constraint(equalTo: topAnchor, constant: inset),
+            content.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -inset),
+            content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+            content.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
+            heightAnchor.constraint(greaterThanOrEqualToConstant: 44)
+        ])
+        addAction(UIAction { _ in action() }, for: .touchUpInside)
+    }
+
+    required init?(coder: NSCoder) { nil }
+}
+
+private final class FeaturedArtworkView: UIView {
+    private let shade = CAGradientLayer()
+
+    init() {
+        super.init(frame: .zero)
+        isUserInteractionEnabled = false
+        accessibilityElementsHidden = true
+        let stills = ["01", "02", "03"].map { id in
+            let image = Bundle.main.url(forResource: id, withExtension: "jpg").flatMap { UIImage(contentsOfFile: $0.path) }
+            let view = UIImageView(image: image)
+            view.contentMode = .scaleAspectFill
+            view.clipsToBounds = true
+            return view
+        }
+        let strip = UIStackView(arrangedSubviews: stills)
+        strip.distribution = .fillEqually
+        strip.spacing = 3
+        strip.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(strip)
+        NSLayoutConstraint.activate([
+            strip.topAnchor.constraint(equalTo: topAnchor),
+            strip.bottomAnchor.constraint(equalTo: bottomAnchor),
+            strip.leadingAnchor.constraint(equalTo: leadingAnchor),
+            strip.trailingAnchor.constraint(equalTo: trailingAnchor)
+        ])
+        shade.colors = [UIColor.black.withAlphaComponent(0.91).cgColor,
+                        UIColor.black.withAlphaComponent(0.58).cgColor,
+                        UIColor.black.withAlphaComponent(0.10).cgColor]
+        shade.locations = [0, 0.56, 1]
+        shade.startPoint = CGPoint(x: 0, y: 0.9)
+        shade.endPoint = CGPoint(x: 1, y: 0.15)
+        layer.addSublayer(shade)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        shade.frame = bounds
     }
 }

@@ -16,7 +16,7 @@ final class DemoCacheViewController: UIViewController {
             switch self {
             case .disabled: "Off"
             case .preparedPlayer: "Players"
-            case .mediaBytes: "Media bytes"
+            case .mediaBytes: "Bytes"
             case .custom: "Custom"
             }
         }
@@ -56,6 +56,8 @@ final class DemoCacheViewController: UIViewController {
     private var cacheEvents: Task<Void, Never>?
     private var routes: [String: String] = [:]
     private var isVisible = false
+    private let workspace = UIStackView()
+    private var controlsWidth: NSLayoutConstraint?
 
     init?(bundle: Bundle) {
         let ids = ["01", "02", "03"]
@@ -77,7 +79,7 @@ final class DemoCacheViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = "Cache policies"
-        view.backgroundColor = .systemBackground
+        view.backgroundColor = DemoStyle.canvas
         policies.accessibilityLabel = "Preload policy"
         episodes.accessibilityLabel = "Episode"
         policies.selectedSegmentIndex = Policy.mediaBytes.rawValue
@@ -94,7 +96,8 @@ final class DemoCacheViewController: UIViewController {
         instructions.adjustsFontForContentSizeCategory = true
         instructions.textColor = .secondaryLabel
         instructions.numberOfLines = 0
-        activity.font = .preferredFont(forTextStyle: .footnote)
+        activity.font = UIFontMetrics(forTextStyle: .footnote)
+            .scaledFont(for: .monospacedSystemFont(ofSize: 12, weight: .medium))
         activity.adjustsFontForContentSizeCategory = true
         activity.textColor = .systemMint
         activity.numberOfLines = 0
@@ -104,31 +107,61 @@ final class DemoCacheViewController: UIViewController {
         customControls.spacing = 8
         customControls.addArrangedSubview(makePrefetchRow("Episodes ahead", picker: prefetchAhead))
         customControls.addArrangedSubview(makePrefetchRow("Episodes behind", picker: prefetchBehind))
-        let stack = UIStackView(arrangedSubviews: [policies, instructions, customControls, episodes, activity, playerContainer])
-        stack.axis = .vertical
-        stack.spacing = 12
-        stack.translatesAutoresizingMaskIntoConstraints = false
+        let policyPanel = DemoStyle.panel([
+            DemoStyle.label("Preload policy", style: .headline, weight: .semibold),
+            policies, instructions, customControls
+        ], spacing: 10)
+        let activityPanel = DemoStyle.panel([
+            DemoStyle.label("Cache activity", style: .headline, weight: .semibold), activity
+        ], spacing: 6)
+        DemoStyle.styleSurface(playerContainer, radius: 20, color: .black)
+        let controls = UIStackView(arrangedSubviews: [policyPanel, episodes, activityPanel])
+        controls.axis = .vertical
+        controls.spacing = 10
+        workspace.addArrangedSubview(controls)
+        workspace.addArrangedSubview(playerContainer)
+        workspace.axis = .vertical
+        workspace.spacing = 12
+        workspace.translatesAutoresizingMaskIntoConstraints = false
+        controlsWidth = controls.widthAnchor.constraint(equalToConstant: 318)
         let scroll = UIScrollView()
         scroll.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(scroll)
-        scroll.addSubview(stack)
+        scroll.addSubview(workspace)
         let safeArea = view.safeAreaLayoutGuide
-        let preferredHeight = playerContainer.heightAnchor.constraint(equalTo: playerContainer.widthAnchor, multiplier: 1.2)
+        let preferredHeight = playerContainer.heightAnchor.constraint(equalTo: playerContainer.widthAnchor, multiplier: 0.98)
         preferredHeight.priority = .defaultHigh
+        let preferredWidth = workspace.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor, constant: -32)
+        preferredWidth.priority = .defaultHigh
         NSLayoutConstraint.activate([
             scroll.topAnchor.constraint(equalTo: safeArea.topAnchor),
             scroll.leadingAnchor.constraint(equalTo: safeArea.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: safeArea.trailingAnchor),
             scroll.bottomAnchor.constraint(equalTo: safeArea.bottomAnchor),
-            stack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: 12),
-            stack.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor, constant: 16),
-            stack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor, constant: -16),
-            stack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -12),
-            stack.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor, constant: -32),
-            playerContainer.heightAnchor.constraint(lessThanOrEqualTo: safeArea.heightAnchor),
-            preferredHeight
+            workspace.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: 12),
+            scroll.contentLayoutGuide.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor),
+            workspace.centerXAnchor.constraint(equalTo: scroll.contentLayoutGuide.centerXAnchor),
+            workspace.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -12),
+            workspace.widthAnchor.constraint(lessThanOrEqualToConstant: 880),
+            workspace.widthAnchor.constraint(lessThanOrEqualTo: scroll.frameLayoutGuide.widthAnchor, constant: -32),
+            playerContainer.heightAnchor.constraint(lessThanOrEqualTo: safeArea.heightAnchor, multiplier: 0.92),
+            preferredHeight,
+            preferredWidth
         ])
         startRun()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        let safeSize = view.safeAreaLayoutGuide.layoutFrame.size
+        let wide = safeSize.width >= 640 && safeSize.width > safeSize.height
+        let axis: NSLayoutConstraint.Axis = wide ? .horizontal : .vertical
+        if workspace.axis != axis {
+            controlsWidth?.isActive = false
+            workspace.axis = axis
+            workspace.alignment = wide ? .top : .fill
+            controlsWidth?.isActive = wide
+        }
     }
 
     private func makePrefetchRow(_ title: String, picker: UISegmentedControl) -> UIView {
@@ -237,7 +270,7 @@ final class DemoCacheViewController: UIViewController {
         let text = items.map { item in
             var details = [routes[item.id] ?? "Not requested"]
             if let presentation = session?.presentation(for: item.id) {
-                details.append(presentation.firstFrameReady ? "First frame ready" : "Player attached")
+                details.append(presentation.firstFrameReady ? "Frame ready" : "Player attached")
             }
             return "Episode \(item.id) · " + details.joined(separator: " · ")
         }.joined(separator: "\n")

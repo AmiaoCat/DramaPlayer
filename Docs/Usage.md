@@ -27,6 +27,12 @@ func makeFeed(urls: [String: URL], orderedIDs: [String], initialID: String?)
 
 Use `session.select(id)` to jump to an episode. Use `setScrollingEnabled(false)` to disable paging while a host interaction requires it. For an existing collection view, call `PlaybackVideoView.display(_:presentation:snapshot:)` with `session.presentation(for: id)` and `session.snapshot` to show the loading indicator over the cover while the selected video prepares or buffers; mount a given presentation layer in only one view at a time.
 
+### Cover loading
+
+`PlaybackVideoView` and `SinglePlaybackView` expose `coverState` and `onCoverStateChange`. The states are `.noCover` (no URL), `.idle` (URL present and no request needed yet), `.loading`, `.loaded`, and `.failed`. The built-in views show one indicator at a time. Video startup takes priority when both requests are pending. Without artwork, the view shows a placeholder until video is ready.
+
+Use `retryCoverLoading()` to retry a failed poster while it is visible. Cover failure leaves playback and video retry independent. The view cancels pending work when the item changes or its first frame becomes visible. Retained ready frames skip poster requests, and an image that finishes after cancellation cannot overwrite the visible frame. For reusable custom cells, call `display(nil, presentation: nil)` when the view leaves display. Keep custom loaders cancellation-aware.
+
 ## Controls and playback events
 
 Set `showsControls: false` on either player view to hide its control bar and keep its tap-to-toggle behavior. Use `PlaybackVideoView` directly when the host owns gestures and controls. The [Custom controls demo](../Demo/Sources/DemoPlayerViewController.swift) binds the selected item and its presentation to this view, renders progress from snapshots, and updates its buttons from the playback state.
@@ -88,7 +94,7 @@ session.setPreloadPolicy(.mediaBytes)
 
 Use signed offsets for nearby episodes or initialize the policy with a lightweight selector that returns episode IDs in priority order. The selector receives the queue and current index on the main actor. The SDK skips the current item, duplicates, and IDs outside the queue. It limits each plan to `maxCandidates` (3 by default, 0–8), resolves each candidate with `.preload`, and sends eligible sources to the cache sequentially. Candidates that fail access or prefetch are skipped. Apply a new policy when user or network preferences change. Changes cancel queued prefetch work and preserve playback. Passing `nil` restores next-episode prefetch. Cache eviction and storage limits remain controlled by the injected `PlaybackMediaCache`. Providers and caches should honor cancellation for in-progress work.
 
-The [Cache policies demo](../Demo/Sources/DemoCacheViewController.swift) uses bundled MP4s to compare these policies offline. **Off** loads each episode on demand. **Players** lets you see a neighboring player attach in advance. **Media bytes** copies the next episode into a temporary file and reports a cache hit when you play it. Changing policies or pressing **Reset** starts a new session with an empty cache.
+The [Cache policies demo](../Demo/Sources/DemoCacheViewController.swift) uses bundled MP4s to compare these policies offline. **Off** loads each episode on demand. **Players** lets you see a neighboring player attach in advance. **Bytes** copies the next episode into a temporary file and reports a cache hit when you play it. Changing policies or pressing **Reset** starts a new session with an empty cache.
 
 The default media cache plays the source URL directly. A disk cache, a streaming proxy, and offline downloads are supplied by the host. The following wraps a store you implement; `localURL(for:)` returns a completed readable local resource or nil.
 

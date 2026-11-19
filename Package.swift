@@ -11,6 +11,7 @@ let package = Package(
     targets: [
         .target(name: "ReelsPlaybackCore"),
         .target(name: "ReelsPlaybackUIKit", dependencies: ["ReelsPlaybackCore"]),
-        .testTarget(name: "ReelsPlaybackCoreTests", dependencies: ["ReelsPlaybackCore"])
+        .testTarget(name: "ReelsPlaybackCoreTests", dependencies: ["ReelsPlaybackCore"]),
+        .testTarget(name: "ReelsPlaybackUIKitTests", dependencies: ["ReelsPlaybackCore", "ReelsPlaybackUIKit"])
     ]
 )

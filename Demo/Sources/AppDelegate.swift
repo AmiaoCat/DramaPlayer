@@ -32,7 +32,17 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options: UIScene.ConnectionOptions) {
         guard let scene = scene as? UIWindowScene else { return }
         let window = UIWindow(windowScene: scene)
-        window.rootViewController = UINavigationController(rootViewController: DemoMenuViewController())
+        let navigation = UINavigationController(rootViewController: DemoMenuViewController())
+        let appearance = UINavigationBarAppearance()
+        appearance.configureWithOpaqueBackground()
+        appearance.backgroundColor = DemoStyle.canvas
+        appearance.shadowColor = .clear
+        navigation.navigationBar.standardAppearance = appearance
+        navigation.navigationBar.scrollEdgeAppearance = appearance
+        navigation.navigationBar.compactAppearance = appearance
+        navigation.navigationBar.tintColor = DemoStyle.accent
+        navigation.navigationBar.prefersLargeTitles = false
+        window.rootViewController = navigation
         window.overrideUserInterfaceStyle = .dark
         self.window = window
         window.makeKeyAndVisible()

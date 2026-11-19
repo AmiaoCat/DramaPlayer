@@ -12,6 +12,8 @@
 - Add opt-in structured logging, a per-load deadline, and a production configuration reference.
 - Add custom media prefetch candidates and live ahead/behind controls in the cache demo.
 - Add opt-in landscape swipes for display brightness and session audio level.
+- Track poster requests independently of video startup, cancel stale work, and show a fallback when artwork is unavailable.
+- Refresh the demo with grouped scenarios, an artwork-led home screen, and an adaptive playback inspector.
 - Preserve the 0.1.1 imports, initializer signatures and default UIKit scaling. Hosts opt in to fit, load deadlines and logging. The demo opts in to these features for testing.
 
 ## 0.1.1

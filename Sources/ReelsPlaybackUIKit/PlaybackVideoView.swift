@@ -23,8 +23,21 @@ public struct URLPlaybackCoverLoader: PlaybackCoverLoader {
     }
 }
 
+/// The poster request lifecycle, independent of video preparation and playback.
+public enum PlaybackCoverState: Equatable, Sendable {
+    case noCover, idle, loading, loaded, failed
+}
+
 @MainActor
 public final class PlaybackVideoView: UIView {
+    public private(set) var coverState: PlaybackCoverState = .noCover {
+        didSet {
+            if coverState != oldValue { onCoverStateChange?(coverState) }
+        }
+    }
+
+    public var onCoverStateChange: ((PlaybackCoverState) -> Void)?
+
     /// Adjusts both the poster and the video without changing the active player.
     public var scaling: PlaybackVideoScaling {
         didSet {
@@ -39,7 +52,9 @@ public final class PlaybackVideoView: UIView {
         }
     }
 
+    private let poster = UIView()
     private let cover = UIImageView()
+    private let placeholder = UIImageView(image: UIImage(systemName: "film"))
     private let loadingIndicator = UIActivityIndicatorView(style: .large)
     private let loader: any PlaybackCoverLoader
     private var coverWork: Task<Void, Never>?
@@ -47,6 +62,7 @@ public final class PlaybackVideoView: UIView {
     private var itemID: String?
     private var playbackLayer: AVPlayerLayer?
     private var hasRevealed = false
+    private var isWaitingForVideo = false
 
     public convenience init(coverLoader: any PlaybackCoverLoader) {
         self.init(coverLoader: coverLoader, scaling: .fill)
@@ -58,17 +74,34 @@ public final class PlaybackVideoView: UIView {
         super.init(frame: .zero)
         backgroundColor = .black
         clipsToBounds = true
+        poster.backgroundColor = .black
+        poster.isUserInteractionEnabled = false
+        poster.isAccessibilityElement = false
+        poster.frame = bounds
+        poster.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        addSubview(poster)
+        cover.frame = poster.bounds
+        cover.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         cover.contentMode = scaling.coverContentMode
         cover.clipsToBounds = true
         cover.isAccessibilityElement = false
-        addSubview(cover)
+        poster.addSubview(cover)
+        placeholder.tintColor = UIColor.white.withAlphaComponent(0.35)
+        placeholder.contentMode = .scaleAspectFit
+        placeholder.isAccessibilityElement = false
+        placeholder.isHidden = true
+        placeholder.translatesAutoresizingMaskIntoConstraints = false
+        poster.addSubview(placeholder)
         loadingIndicator.color = .white
         loadingIndicator.hidesWhenStopped = true
         loadingIndicator.isUserInteractionEnabled = false
-        loadingIndicator.accessibilityLabel = String(localized: "Loading video")
         loadingIndicator.translatesAutoresizingMaskIntoConstraints = false
         addSubview(loadingIndicator)
         NSLayoutConstraint.activate([
+            placeholder.widthAnchor.constraint(equalToConstant: 36),
+            placeholder.heightAnchor.constraint(equalTo: placeholder.widthAnchor),
+            placeholder.centerXAnchor.constraint(equalTo: poster.centerXAnchor),
+            placeholder.centerYAnchor.constraint(equalTo: poster.centerYAnchor),
             loadingIndicator.centerXAnchor.constraint(equalTo: centerXAnchor),
             loadingIndicator.centerYAnchor.constraint(equalTo: centerYAnchor)
         ])
@@ -78,7 +111,6 @@ public final class PlaybackVideoView: UIView {
 
     public override func layoutSubviews() {
         super.layoutSubviews()
-        cover.frame = bounds
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         if playbackLayer?.superlayer === layer { playbackLayer?.frame = bounds }
@@ -89,12 +121,15 @@ public final class PlaybackVideoView: UIView {
         display(item, presentation: presentation, snapshot: nil)
     }
 
-    /// Pass the session snapshot to show loading above the cover for the active item.
+    /// Pass the session snapshot to show video loading while the active item waits for its first frame.
     public func display(_ item: PlaybackItem?, presentation: PlaybackPresentation?, snapshot: PlaybackSnapshot?) {
         let changedItem = itemID != item?.id
+        let changedCover = changedItem || coverURL != item?.coverURL
         itemID = item?.id
-        if changedItem || coverURL != item?.coverURL {
-            updateCover(url: item?.coverURL)
+        if changedCover {
+            cancelCoverLoad()
+            coverURL = item?.coverURL
+            cover.image = nil
         }
 
         let nextLayer = presentation?.layer
@@ -107,42 +142,73 @@ public final class PlaybackVideoView: UIView {
                 CATransaction.setDisableActions(true)
                 nextLayer.videoGravity = scaling.videoGravity
                 nextLayer.frame = bounds
-                layer.insertSublayer(nextLayer, below: cover.layer)
+                layer.insertSublayer(nextLayer, below: poster.layer)
                 CATransaction.commit()
             }
             hasRevealed = presentation?.firstFrameReady == true
-            cover.layer.removeAllAnimations()
-            cover.alpha = hasRevealed ? 0 : 1
+            poster.layer.removeAllAnimations()
+            poster.alpha = hasRevealed ? 0 : 1
         } else if presentation?.firstFrameReady == true, !hasRevealed {
             hasRevealed = true
             if UIAccessibility.isReduceMotionEnabled {
-                cover.alpha = 0
+                poster.alpha = 0
             } else {
                 UIView.animate(withDuration: 0.16, delay: 0, options: [.curveEaseOut, .allowUserInteraction]) {
-                    self.cover.alpha = 0
+                    self.poster.alpha = 0
                 }
             }
         }
 
-        let isLoading = item != nil && !hasRevealed && snapshot?.itemID == item?.id
+        isWaitingForVideo = item != nil && snapshot?.itemID == item?.id
             && snapshot?.wantsPlayback == true
             && (snapshot?.state == .preparing || snapshot?.state == .buffering)
-        if isLoading {
+        if changedCover {
+            coverState = coverURL == nil ? .noCover : .idle
+        }
+        if hasRevealed, coverState == .loading {
+            cancelCoverLoad()
+            coverState = .idle
+        }
+        loadCoverIfNeeded()
+        updateLoadingUI()
+    }
+
+    /// Retries a failed poster request while the poster is visible.
+    public func retryCoverLoading() {
+        guard !hasRevealed, coverState == .failed else { return }
+        coverState = .idle
+        loadCoverIfNeeded()
+    }
+
+    private func cancelCoverLoad() {
+        coverWork?.cancel()
+        coverWork = nil
+    }
+
+    private func loadCoverIfNeeded() {
+        guard !hasRevealed, coverState == .idle, let url = coverURL else { return }
+        coverWork = Task { [weak self, loader] in
+            guard !Task.isCancelled else { return }
+            let image = await loader.image(for: url)
+            guard let self, !Task.isCancelled, coverURL == url, !hasRevealed else { return }
+            coverWork = nil
+            cover.image = image
+            coverState = image == nil ? .failed : .loaded
+            updateLoadingUI()
+        }
+        coverState = .loading
+        updateLoadingUI()
+    }
+
+    private func updateLoadingUI() {
+        let showLoading = !hasRevealed && (isWaitingForVideo || coverState == .loading)
+        placeholder.isHidden = itemID == nil || cover.image != nil || showLoading
+        if showLoading {
+            loadingIndicator.accessibilityLabel = isWaitingForVideo
+                ? String(localized: "Loading video") : String(localized: "Loading cover")
             if !loadingIndicator.isAnimating { loadingIndicator.startAnimating() }
         } else {
             loadingIndicator.stopAnimating()
-        }
-    }
-
-    private func updateCover(url: URL?) {
-        coverWork?.cancel()
-        if coverURL != url { cover.image = nil }
-        coverURL = url
-        guard let url, cover.image == nil else { return }
-        coverWork = Task { [weak self, loader] in
-            let image = await loader.image(for: url)
-            guard let self, !Task.isCancelled, self.coverURL == url else { return }
-            self.cover.image = image
         }
     }
 

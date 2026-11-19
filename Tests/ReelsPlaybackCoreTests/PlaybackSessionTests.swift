@@ -295,6 +295,69 @@ final class PlaybackSessionTests: XCTestCase {
     }
 
     @MainActor
+    func testCustomPrefetchFiltersCandidatesChecksAuthorizationAndKeepsPlayback() async throws {
+        let cache = PrefetchRecorder()
+        let logs = LogRecorder()
+        let provider = PlaybackSourceResolver { item, purpose in
+            if purpose == .preload, item.id == "locked" { return .requiresUserAction }
+            return .allowed(.init(url: URL(fileURLWithPath: "/\(item.id).mp4"), cacheKey: item.id))
+        }
+        let (session, drivers) = makeSession(mode: .vertical, provider: provider, cache: cache,
+                                             logger: .init(minimumLevel: .debug) { logs.append($0) })
+        session.setItems(["a", "b", "c", "locked", "d", "e"].map { PlaybackItem(id: $0) }, selectedID: "b")
+        session.activate()
+        try await wait { session.snapshot.state == .playing }
+        let selected = drivers.values[0]
+        selected.position = 17
+
+        session.setMediaPrefetchPolicy(.init(maxCandidates: 3) { context in
+            ["d", context.selectedItem.id, "d", "missing", "locked", "a", "e"]
+        })
+        session.setPreloadPolicy(.mediaBytes)
+        try await wait { logs.entries.filter { $0.event == .prefetchFinished }.count == 2 }
+        let custom = await cache.keys
+        XCTAssertEqual(custom, ["d", "a"])
+        XCTAssertEqual(session.snapshot.position, 17)
+        XCTAssertTrue(session.presentation(for: "b")?.layer === selected.layer)
+
+        session.setMediaPrefetchPolicy(nil)
+        try await wait { logs.entries.filter { $0.event == .prefetchFinished }.count == 3 }
+        let standard = await cache.keys
+        XCTAssertEqual(standard, ["d", "a", "c"])
+        XCTAssertTrue(selected.isPlaying)
+    }
+
+    func testMediaPrefetchOffsetsIgnoreOverflowAndQueueEdges() {
+        let items = ["a", "b", "c"].map { PlaybackItem(id: $0) }
+        let policy = PlaybackMediaPrefetchPolicy(offsets: [Int.max, -2, 1, 0, -1, 1])
+        XCTAssertEqual(policy.candidates(in: items, selectedIndex: 1).map(\.id), ["c", "a"])
+        XCTAssertTrue(PlaybackMediaPrefetchPolicy(offsets: [1], maxCandidates: 0)
+            .candidates(in: items, selectedIndex: 1).isEmpty)
+    }
+
+    @MainActor
+    func testVolumeAppliesToPreparedAndFuturePlayers() async throws {
+        let (session, drivers) = makeSession(mode: .vertical)
+        session.setVolume(0.4)
+        session.setItems(["a", "b", "c"].map { PlaybackItem(id: $0) })
+        session.activate()
+        try await wait { drivers.values.count == 2 && drivers.values[1].status == .ready }
+        XCTAssertEqual(drivers.values.map(\.volume), [0.4, 0.4])
+
+        session.setVolume(-1)
+        session.setVolume(.nan)
+        XCTAssertEqual(session.volume, 0)
+        XCTAssertEqual(drivers.values.map(\.volume), [0, 0])
+        session.select("b")
+        try await wait { drivers.values.count == 3 && drivers.values[2].status == .ready }
+        XCTAssertEqual(drivers.values[2].volume, 0)
+
+        session.setVolume(2)
+        XCTAssertEqual(session.volume, 1)
+        XCTAssertEqual(drivers.values.map(\.volume), [1, 1, 1])
+    }
+
+    @MainActor
     private func makeSession(mode: PlaybackConfiguration.Mode = .single, focus: PlaybackFocus? = nil,
                              provider: (any PlaybackSourceProvider)? = nil,
                              cache: any PlaybackMediaCache = DirectPlaybackMediaCache(),
@@ -372,6 +435,7 @@ private final class FakeDriver: PlaybackDriver {
     var lastRate: Float = 1
     var loadedURLs: [URL] = []
     var preferences = PlaybackStreamPreferences()
+    var volume: Float = 1
     private let statusAfterLoad: (URL) -> DriverStatus
 
     init(statusAfterLoad: @escaping (URL) -> DriverStatus = { _ in .ready }) {
@@ -418,4 +482,12 @@ private actor CacheStub: PlaybackMediaCache {
     }
 
     func invalidate(_ source: PlaybackSource) async { invalidations += 1 }
+}
+
+private actor PrefetchRecorder: PlaybackMediaCache {
+    private(set) var keys: [String] = []
+
+    func media(for source: PlaybackSource) async throws -> PlaybackMedia { .init(url: source.url) }
+
+    func prefetch(_ source: PlaybackSource) async throws { keys.append(source.cacheKey) }
 }

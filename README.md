@@ -24,12 +24,12 @@ Open [Demo/DramaPlayerDemo.xcodeproj](Demo/DramaPlayerDemo.xcodeproj) in Xcode, 
 | Demo | Try it |
 | --- | --- |
 | **Single video** | Tap to pause, drag the timeline to seek, change speed, and let the clip loop. |
-| **Landscape video** | Play a bundled 16:9 clip and rotate while it plays. The whole image stays visible. |
+| **Landscape video** | Play a bundled 16:9 clip and rotate while it plays. Swipe vertically on the left for brightness or on the right for playback volume. Try the Apple HLS sample to hear the volume change. |
 | **Video layouts** | Preview 12 fit/fill templates with either bundled format. Enter **Mini player**, drag the handle or resize corner, or enter dimensions under **Custom size**. |
 | **Vertical feed** | Swipe or select an episode from **Episodes**. Let a clip end to see the feed advance. |
 | **Custom controls** | Press **Play** to start from 2 seconds, skip forward, and replay after completion. The host renders its own controls and progress. |
 | **Episode access** | Episode 2 starts locked. Press **Unlock episode** to grant demo access and retry. Reopening the example resets the grant. |
-| **Cache policies** | Compare **Off**, **Players**, and **Media bytes**. With **Media bytes** selected, wait for Episode 2 to show **Prefetched**, then select it to see **Cache hit**. |
+| **Cache policies** | Compare Off, Players, Media bytes, and Custom. With **Custom**, change how many episodes to prefetch ahead or behind while the selected episode plays. |
 | **Remote playback** | Enter an HTTPS MP4 or HLS URL or choose **Apple HLS sample**. Check first-frame timing and open **Playback** to adjust quality preferences, audio, or subtitles. |
 
 See the [playback controller](Demo/Sources/DemoPlayerViewController.swift) for session and lifecycle wiring, and the [cache demo](Demo/Sources/DemoCacheViewController.swift) for a working `PlaybackCacheAdapter` backed by temporary files.

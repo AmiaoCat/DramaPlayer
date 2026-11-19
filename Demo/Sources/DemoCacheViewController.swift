@@ -10,13 +10,14 @@ import ReelsPlaybackUIKit
 @MainActor
 final class DemoCacheViewController: UIViewController {
     private enum Policy: Int, CaseIterable {
-        case disabled, preparedPlayer, mediaBytes
+        case disabled, preparedPlayer, mediaBytes, custom
 
         var title: String {
             switch self {
             case .disabled: "Off"
             case .preparedPlayer: "Players"
             case .mediaBytes: "Media bytes"
+            case .custom: "Custom"
             }
         }
 
@@ -24,7 +25,7 @@ final class DemoCacheViewController: UIViewController {
             switch self {
             case .disabled: .disabled
             case .preparedPlayer: .preparedPlayer
-            case .mediaBytes: .mediaBytes
+            case .mediaBytes, .custom: .mediaBytes
             }
         }
 
@@ -33,6 +34,7 @@ final class DemoCacheViewController: UIViewController {
             case .disabled: "Choose another episode to load it on demand."
             case .preparedPlayer: "Watch for a player beside the next episode, then select it."
             case .mediaBytes: "Wait for Episode 2 to show Prefetched, then select it to see a Cache hit."
+            case .custom: "Choose how many episodes to prefetch ahead or behind. Changes apply while the current episode plays."
             }
         }
     }
@@ -41,6 +43,9 @@ final class DemoCacheViewController: UIViewController {
     private let sourceProvider: PlaybackSourceResolver
     private let policies = UISegmentedControl(items: Policy.allCases.map(\.title))
     private let episodes = UISegmentedControl(items: ["Episode 1", "Episode 2", "Episode 3"])
+    private let prefetchAhead = UISegmentedControl(items: ["0", "1", "2"])
+    private let prefetchBehind = UISegmentedControl(items: ["0", "1", "2"])
+    private let customControls = UIStackView()
     private let instructions = UILabel()
     private let activity = UILabel()
     private let playerContainer = UIView()
@@ -95,7 +100,11 @@ final class DemoCacheViewController: UIViewController {
         activity.numberOfLines = 0
         activity.accessibilityIdentifier = "cache-activity"
 
-        let stack = UIStackView(arrangedSubviews: [policies, instructions, episodes, activity, playerContainer])
+        customControls.axis = .vertical
+        customControls.spacing = 8
+        customControls.addArrangedSubview(makePrefetchRow("Episodes ahead", picker: prefetchAhead))
+        customControls.addArrangedSubview(makePrefetchRow("Episodes behind", picker: prefetchBehind))
+        let stack = UIStackView(arrangedSubviews: [policies, instructions, customControls, episodes, activity, playerContainer])
         stack.axis = .vertical
         stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -122,6 +131,32 @@ final class DemoCacheViewController: UIViewController {
         startRun()
     }
 
+    private func makePrefetchRow(_ title: String, picker: UISegmentedControl) -> UIView {
+        let label = UILabel()
+        label.text = title
+        label.font = .preferredFont(forTextStyle: .footnote)
+        label.adjustsFontForContentSizeCategory = true
+        label.numberOfLines = 0
+        label.isAccessibilityElement = false
+        picker.accessibilityLabel = title
+        picker.selectedSegmentIndex = 1
+        picker.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            session?.setMediaPrefetchPolicy(customPolicy)
+        }, for: .valueChanged)
+        let row = UIStackView(arrangedSubviews: [label, picker])
+        row.alignment = .center
+        row.distribution = .fillEqually
+        row.spacing = 12
+        return row
+    }
+
+    private var customPolicy: PlaybackMediaPrefetchPolicy {
+        let ahead = (0..<max(0, prefetchAhead.selectedSegmentIndex)).map { $0 + 1 }
+        let behind = (0..<max(0, prefetchBehind.selectedSegmentIndex)).map { -($0 + 1) }
+        return .init(offsets: ahead + behind, maxCandidates: 4)
+    }
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         isVisible = true
@@ -143,9 +178,10 @@ final class DemoCacheViewController: UIViewController {
         playerView?.removeFromSuperview()
         routes.removeAll()
         instructions.text = policy.instructions
+        customControls.isHidden = policy != .custom
         episodes.selectedSegmentIndex = 0
 
-        // Each run starts with an empty host cache so the three policies can be compared.
+        // Reset and mode switches start fresh. Editing a custom plan keeps the current session.
         let (activityStream, continuation) = AsyncStream<DemoMediaCache.Activity>.makeStream()
         let store = DemoMediaCache(activity: continuation)
         let cache = PlaybackCacheAdapter(
@@ -161,6 +197,7 @@ final class DemoCacheViewController: UIViewController {
         )
         self.session = session
         lifecycle = PlaybackLifecycle(session: session)
+        if policy == .custom { session.setMediaPrefetchPolicy(customPolicy) }
         session.setItems(items)
 
         // Keep vertical-mode preloading while choosing episodes explicitly from the host UI.

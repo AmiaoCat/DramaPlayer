@@ -33,12 +33,12 @@ DramaPlayer 面向 iOS 16+ 的 UIKit 项目，提供单视频播放和竖滑剧�
 | 场景 | 操作与预期结果 | 对应接口 |
 | --- | --- | --- |
 | Single video | 点击视频暂停，拖动进度条或切换倍速。片段播完后循环。 | `SinglePlaybackView`、`.loop` |
-| Landscape video | 播放内置 16:9 片段时旋转手机，对照横屏和竖屏下的完整画面与播放进度。 | `PlaybackVideoScaling.fit`、`SinglePlaybackView` |
+| Landscape video | 横屏后在画面左侧上下滑调亮度，右侧上下滑调播放音量。内置样片静音，可用 Apple HLS 样片试听音量变化。 | `isLandscapeAdjustmentEnabled`、`setVolume(_:)` |
 | Video layouts | 横版和竖版样片可切换 12 套布局。打开 **Mini player** 后拖动顶部或右下角，也可在 **Custom size** 分别输入宽和高。 | `PlaybackLayoutTemplate.presets`、`PlaybackMiniPlayerView` |
 | Vertical feed | 上下滑动或点击 **Episodes** 跳集。播完自动进入下一集，末集播完停止。 | `VerticalPlaybackView`、`select(_:)`、`.preparedPlayer`、`.advance` |
 | Custom controls | 按 **Play** 从第 2 秒开始，按 **+5 seconds** 快进，播完按 **Replay**。 | `PlaybackVideoView`、`resumePosition`、`events()`、`seek(to:)` |
 | Episode access | 第 2 集显示 **Access required**。按 **Unlock episode** 后播放。返回菜单重新进入可再次体验锁定状态。 | `.requiresUserAction`、`retry()` |
-| Cache policies | 切换 **Off**、**Players**、**Media bytes**。在 **Media bytes** 下等第 2 集显示 **Prefetched** 后选中它，查看 **Cache hit**。按 **Reset** 从第 1 集和空缓存重新开始。 | `PlaybackConfiguration.Preload`、`PlaybackCacheAdapter` |
+| Cache policies | 选 **Custom**，分别设置前后预取 0–2 集。等目标集显示 **Prefetched** 后选中它，查看 **Cache hit**。按 **Reset** 从第 1 集和空缓存重新开始。 | `PlaybackMediaPrefetchPolicy`、`PlaybackCacheAdapter` |
 | Remote playback | 输入直连 HTTPS 地址或选择 **Apple HLS sample**。查看首帧耗时，在 **Playback** 菜单切换省流偏好、音轨或字幕。失败后可点击 **Retry playback**。 | `diagnostics()`、`setStreamPreferences(_:)`、`mediaTrackGroup(for:)` |
 
 ## 接入业务数据

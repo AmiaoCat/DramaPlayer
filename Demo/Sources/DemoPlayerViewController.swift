@@ -60,6 +60,8 @@ final class DemoPlayerViewController: UIViewController {
     private var observations: Task<Void, Never>?
     private var diagnosticObservations: Task<Void, Never>?
     private weak var feedView: VerticalPlaybackView?
+    private var customLandscapeGestures: PlaybackLandscapeGestures?
+    private let help = UILabel()
 
     init?(mode: Mode) {
         self.mode = mode
@@ -106,6 +108,7 @@ final class DemoPlayerViewController: UIViewController {
         let player: UIView
         if mode.isVertical {
             let feed = VerticalPlaybackView(session: session)
+            feed.isLandscapeAdjustmentEnabled = true
             feedView = feed
             player = feed
             let menu = UIMenu(children: session.items.enumerated().map { index, item in
@@ -114,11 +117,13 @@ final class DemoPlayerViewController: UIViewController {
             navigationItem.rightBarButtonItem = UIBarButtonItem(title: "Episodes", menu: menu)
         } else if mode == .custom {
             player = customVideo
+            customLandscapeGestures = PlaybackLandscapeGestures(session: session, surface: customVideo)
         } else {
-            player = SinglePlaybackView(session: session, scaling: .fit)
+            let single = SinglePlaybackView(session: session, scaling: .fit)
+            single.isLandscapeAdjustmentEnabled = true
+            player = single
         }
 
-        let help = UILabel()
         configureLabel(help, color: .secondaryLabel)
         help.text = mode.help
         configureLabel(status, color: .systemMint)
@@ -172,6 +177,10 @@ final class DemoPlayerViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        let guidance = mode.isVertical ? "Swipe left/right sides vertically to adjust · Center to page"
+            : "Slide up or down · Left for brightness · Right for volume"
+        let helpText = view.bounds.width > view.bounds.height ? guidance : mode.help
+        if help.text != helpText { help.text = helpText }
         if let feed = feedView, feed.bounds.height > 0 {
             // Keep portrait material intact in wide windows, including the unfolded display.
             feed.scaling = feed.bounds.width / feed.bounds.height > 0.7 ? .fit : .fill

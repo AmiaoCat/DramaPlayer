@@ -30,6 +30,7 @@ let session = PlaybackSession(
 | `mode` | `.single` | 单视频模式只持有 1 个播放器槽位。`.vertical` 开启邻集与最近访问剧集的复用窗口。UIKit 布局由宿主选择对应视图。 |
 | `autoplay` | `true` | 选集时设置播放意图。会话激活、无暂停原因且已获授权时才播放。用户手动暂停过的剧集在当前队列中保持暂停意图。 |
 | `preload` | `.preparedPlayer` | `.disabled` 关闭主动预加载，`.preparedPlayer` 预备相邻槽位，`.mediaBytes` 请求宿主预取下一集。用 `setPreloadPolicy(_:)` 修改当前策略，释放非当前播放器并取消旧预取。 |
+| `setMediaPrefetchPolicy(_:)` | `nil` | 仅用于 `.mediaBytes`。传入相对集数或按剧集 ID 排序的选择函数，默认最多 3 个有效候选，可配置为 0–8。SDK 按顺序校验权限并逐个预取；修改时保留当前集和已写入的缓存。传 `nil` 恢复仅预取下一集。 |
 | `endBehavior` | `.stop` | `.loop` 从头重播，`.advance` 转到下一集并在末集停止。`.ended(id)` 在循环或切集前发出。 |
 | `preparedItemLimit` | `3` | 限制在 1–3，包含当前集。单视频模式固定使用 1 个槽位。此参数限制播放器数量，磁盘配额由缓存实现负责。 |
 | `retention` | `120` 秒 | 播放器复用的最长停留时间，在切集、预加载窗口更新等时机检查。使用单调时钟，签名 URL 到期仍以实际日期判断。设为 0 可使已停放的播放器很快失去复用资格。 |
@@ -49,6 +50,8 @@ let session = PlaybackSession(
 | --- | --- |
 | `scaling` | UIKit 播放视图仍默认 `.fill`。单视频需要完整画面时传入 `.fit`。可在窗口尺寸变化时修改，封面和视频使用相同的策略。 |
 | `showsControls` | 内置播放器视图默认显示控制栏。可以隐藏内置栏，使用快进、倍速、拖动与事件接口构建宿主的控件。 |
+| `isLandscapeAdjustmentEnabled` | UIKit 播放视图默认关闭。启用后在横向窗口的横向播放区上下滑，左侧调当前屏幕亮度，右侧调会话播放音量。进度条等原生控件保持独立。竖滑列表中间 20% 留给翻页。 |
+| `setVolume(_:)` | 会话音量默认 `1`，有限值限制在 `0...1`，切集和预加载播放器复用时继续生效。它调整相对于系统音量的播放器增益。 [Apple AVPlayer 音量说明](https://developer.apple.com/documentation/avfoundation/avplayer/volume) |
 | `coverLoader` | 默认从本地或 HTTP(S) URL 加载图片。对大量系统剧集封面，注入宿主的图片缓存与解码流程。 |
 | `PlaybackLayoutTemplate.presets` | 6 个比例乘以 Fit 和 Fill，共 12 套。通过 `fittedSize(in:)` 获取容器尺寸；设置播放器的 `scaling` 后，视图会按对应方式呈现。 |
 | `PlaybackMiniPlayerView.preferredSize` | 默认 240 × 180 pt，包含标题拖动区。用 `setPreferredSize(_:)` 传入正且有限的宽高。可见尺寸受可用空间约束，正常空间下最小 152 × 112 pt。 |

@@ -79,6 +79,15 @@ For a direct remote URL, pass the HTTPS MP4 or HLS playlist URL to `PlaybackSour
 | `.mediaBytes` | Hands prefetch of the next item to the injected `PlaybackMediaCache`. |
 | `.disabled` | Disables proactive preloading. |
 
+### Custom media prefetch
+
+```swift
+session.setMediaPrefetchPolicy(.init(offsets: [1, 2, -1]))
+session.setPreloadPolicy(.mediaBytes)
+```
+
+Use signed offsets for nearby episodes or initialize the policy with a lightweight selector that returns episode IDs in priority order. The selector receives the queue and current index on the main actor. The SDK skips the current item, duplicates, and IDs outside the queue. It limits each plan to `maxCandidates` (3 by default, 0–8), resolves each candidate with `.preload`, and sends eligible sources to the cache sequentially. Candidates that fail access or prefetch are skipped. Apply a new policy when user or network preferences change. Changes cancel queued prefetch work and preserve playback. Passing `nil` restores next-episode prefetch. Cache eviction and storage limits remain controlled by the injected `PlaybackMediaCache`. Providers and caches should honor cancellation for in-progress work.
+
 The [Cache policies demo](../Demo/Sources/DemoCacheViewController.swift) uses bundled MP4s to compare these policies offline. **Off** loads each episode on demand. **Players** lets you see a neighboring player attach in advance. **Media bytes** copies the next episode into a temporary file and reports a cache hit when you play it. Changing policies or pressing **Reset** starts a new session with an empty cache.
 
 The default media cache plays the source URL directly. A disk cache, a streaming proxy, and offline downloads are supplied by the host. The following wraps a store you implement; `localURL(for:)` returns a completed readable local resource or nil.
@@ -174,6 +183,12 @@ let feed = VerticalPlaybackView(session: session, scaling: .fill)
 `PlaybackVideoScaling.fit` keeps the full frame visible. `.fill` fills the viewport with proportional cropping and remains the default for the UIKit player views. The scaling setting applies to the poster and the AVPlayer layer. You can update the view's `scaling` property as its bounds change without resetting the session. The Demo opts in to fit for single-video previews and switches its portrait feed to fit on wider viewports.
 
 The host decides which interface orientations to support. Keep the player pinned to its container and place interactive controls inside the safe area. Use window-scene geometry and the view's current bounds to adapt when the device rotates or a foldable display or Split View changes the window size. Keep the same session so the selected episode and playback progress survive the resize. For full-display behavior on iPhone Duo, build the host app with the iOS 27.1 SDK or later and validate the outer and inner displays, rotation, and fold poses in Device Hub. [Apple's iPhone Duo preparation guide](https://developer.apple.com/iphone-duo/prepare/)
+
+### Landscape brightness and volume gestures
+
+Set `isLandscapeAdjustmentEnabled = true` on `SinglePlaybackView` or `VerticalPlaybackView`. Swipe vertically on the left of a wide video surface to adjust screen brightness, and on the right to adjust the playback session's volume. The feed reserves its center fifth for paging. For custom layouts, retain a `PlaybackLandscapeGestures(session:surface:)` on the video surface and call `invalidate()` to detach it. Place native controls above or outside that surface.
+
+`session.setVolume(_:)` applies a relative gain from 0 to 1 across active, prepared and future players. Use the system volume buttons or a host-provided `MPVolumeView` for the device's output level. [Apple AVPlayer volume](https://developer.apple.com/documentation/avfoundation/avplayer/volume)
 
 ## Layout presets and an in-app mini player
 

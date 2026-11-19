@@ -9,6 +9,17 @@ public final class SinglePlaybackView: UIView {
     private let session: PlaybackSession
     private let video: PlaybackVideoView
     private var events: Task<Void, Never>?
+    private var landscapeGestures: PlaybackLandscapeGestures?
+
+    public var isLandscapeAdjustmentEnabled: Bool {
+        get { landscapeGestures?.isEnabled ?? false }
+        set {
+            if newValue, landscapeGestures == nil {
+                landscapeGestures = PlaybackLandscapeGestures(session: session, surface: video)
+            }
+            landscapeGestures?.isEnabled = newValue
+        }
+    }
 
     public var scaling: PlaybackVideoScaling {
         get { video.scaling }
@@ -56,6 +67,21 @@ public final class VerticalPlaybackView: UIView, UICollectionViewDataSource, UIC
     private var events: Task<Void, Never>?
     private var itemIDs: [String] = []
     private var lastSize: CGSize = .zero
+    private var landscapeGestures: PlaybackLandscapeGestures?
+
+    /// The central fifth of the feed remains available for vertical paging.
+    public var isLandscapeAdjustmentEnabled: Bool {
+        get { landscapeGestures?.isEnabled ?? false }
+        set {
+            if newValue, landscapeGestures == nil {
+                let gestures = PlaybackLandscapeGestures(session: session, surface: collection,
+                                                         reservesCenterForPaging: true, indicatorHost: self)
+                collection.panGestureRecognizer.require(toFail: gestures.recognizer)
+                landscapeGestures = gestures
+            }
+            landscapeGestures?.isEnabled = newValue
+        }
+    }
 
     public var scaling: PlaybackVideoScaling {
         didSet {

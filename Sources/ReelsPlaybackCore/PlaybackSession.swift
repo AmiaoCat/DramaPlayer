@@ -48,6 +48,8 @@ public final class PlaybackSession {
     public private(set) var items: [PlaybackItem] = []
     public private(set) var selectedID: String?
     public private(set) var rate: Float = 1
+    /// The session's audio level relative to the current system volume.
+    public private(set) var volume: Float = 1
     public private(set) var streamPreferences: PlaybackStreamPreferences
     public private(set) var preloadPolicy: PlaybackConfiguration.Preload
 
@@ -71,7 +73,9 @@ public final class PlaybackSession {
     private var seekTask: Task<Void, Never>?
     private var seekID: UUID?
     private var prefetchTask: Task<Void, Never>?
-    private var prefetchedID: String?
+    private var prefetchingID: String?
+    private var hasPlannedPrefetch = false
+    private var mediaPrefetchPolicy: PlaybackMediaPrefetchPolicy?
     private var preloadingSuppressed = false
 
     public convenience init(configuration: PlaybackConfiguration,
@@ -248,6 +252,15 @@ public final class PlaybackSession {
         publish()
     }
 
+    /// Adjusts the audio level of the current and prepared players, including future episodes.
+    public func setVolume(_ volume: Float) {
+        guard volume.isFinite else { return }
+        let level = min(1, max(0, volume))
+        guard level != self.volume else { return }
+        self.volume = level
+        for slot in slots.values { slot.driver.volume = level }
+    }
+
     /// Updates the selected and retained players, and supplies hints for future loads.
     public func setStreamPreferences(_ preferences: PlaybackStreamPreferences) {
         guard streamPreferences != preferences else { return }
@@ -269,6 +282,16 @@ public final class PlaybackSession {
         for id in Array(slots.keys) where id != selectedID { release(id) }
         reconcileWindow()
         publish()
+    }
+
+    /// Customizes `.mediaBytes` candidates without restarting playback. Pass nil for next-episode prefetch.
+    public func setMediaPrefetchPolicy(_ policy: PlaybackMediaPrefetchPolicy?) {
+        mediaPrefetchPolicy = policy
+        guard preloadPolicy == .mediaBytes else { return }
+        log(.info, .preloadPolicyChanged, itemID: selectedID,
+            fields: ["policy": "mediaBytes", "candidates": policy == nil ? "next" : "custom"])
+        cancelPrefetch()
+        reconcileWindow()
     }
 
     /// Loads embedded or HLS media options for the selected item.
@@ -468,12 +491,13 @@ public final class PlaybackSession {
                 load(item, purpose: .preload)
             }
         case .mediaBytes:
-            if index + 1 < items.count { prefetch(items[index + 1]) }
+            prefetchMedia(selectedIndex: index)
         }
     }
 
     private func load(_ item: PlaybackItem, purpose: PlaybackPurpose) {
         let slot = Slot(item: item, purpose: purpose, driver: makeDriver())
+        slot.driver.volume = volume
         slots[item.id] = slot
         log(.debug, .sourceRequested, itemID: item.id, fields: ["purpose": String(describing: purpose)])
         armLoadDeadline(for: slot)
@@ -735,24 +759,39 @@ public final class PlaybackSession {
         publish()
     }
 
-    private func prefetch(_ item: PlaybackItem) {
-        guard prefetchedID != item.id else { return }
-        cancelPrefetch()
-        prefetchedID = item.id
-        log(.debug, .prefetchRequested, itemID: item.id)
+    private func prefetchMedia(selectedIndex: Int) {
+        guard !hasPlannedPrefetch else { return }
+        hasPlannedPrefetch = true
+        let candidates: [PlaybackItem]
+        if let mediaPrefetchPolicy {
+            candidates = mediaPrefetchPolicy.candidates(in: items, selectedIndex: selectedIndex)
+        } else {
+            candidates = items.indices.contains(selectedIndex + 1) ? [items[selectedIndex + 1]] : []
+        }
+        guard !candidates.isEmpty else { return }
         prefetchTask = Task(priority: .utility) { [weak self, sourceProvider, cache] in
-            defer { if !Task.isCancelled { self?.prefetchTask = nil } }
-            do {
-                let access = try await sourceProvider.source(for: item, purpose: .preload)
-                guard !Task.isCancelled else { return }
-                guard case .allowed(let source) = access, source.isValid else {
-                    self?.log(.debug, .prefetchSkipped, itemID: item.id)
-                    return
+            defer {
+                if !Task.isCancelled {
+                    self?.prefetchTask = nil
+                    self?.prefetchingID = nil
                 }
-                try await cache.prefetch(source)
-                if !Task.isCancelled { self?.log(.debug, .prefetchFinished, itemID: item.id) }
-            } catch {
-                if !Task.isCancelled { self?.log(.warning, .prefetchFailed, itemID: item.id) }
+            }
+            for item in candidates {
+                guard !Task.isCancelled else { return }
+                self?.prefetchingID = item.id
+                self?.log(.debug, .prefetchRequested, itemID: item.id)
+                do {
+                    let access = try await sourceProvider.source(for: item, purpose: .preload)
+                    guard !Task.isCancelled else { return }
+                    guard case .allowed(let source) = access, source.isValid else {
+                        self?.log(.debug, .prefetchSkipped, itemID: item.id)
+                        continue
+                    }
+                    try await cache.prefetch(source)
+                    if !Task.isCancelled { self?.log(.debug, .prefetchFinished, itemID: item.id) }
+                } catch {
+                    if !Task.isCancelled { self?.log(.warning, .prefetchFailed, itemID: item.id) }
+                }
             }
         }
     }
@@ -765,10 +804,11 @@ public final class PlaybackSession {
     }
 
     private func cancelPrefetch() {
-        if let id = prefetchedID, prefetchTask != nil { log(.debug, .prefetchCancelled, itemID: id) }
+        if let id = prefetchingID { log(.debug, .prefetchCancelled, itemID: id) }
         prefetchTask?.cancel()
         prefetchTask = nil
-        prefetchedID = nil
+        prefetchingID = nil
+        hasPlannedPrefetch = false
     }
 
     private func cancelSeek() {

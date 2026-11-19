@@ -16,6 +16,7 @@ protocol PlaybackDriver: AnyObject {
     var isPlaying: Bool { get }
     var isWaiting: Bool { get }
     var isFrameReady: Bool { get }
+    var volume: Float { get set }
     func load(_ url: URL, preferences: PlaybackStreamPreferences)
     func setStreamPreferences(_ preferences: PlaybackStreamPreferences)
     func mediaTrackGroup(for kind: PlaybackMediaTrackKind) async -> PlaybackMediaTrackGroup?
@@ -85,6 +86,11 @@ final class AVPlaybackDriver: PlaybackDriver {
     var isPlaying: Bool { player.timeControlStatus == .playing }
     var isWaiting: Bool { player.timeControlStatus == .waitingToPlayAtSpecifiedRate }
     var isFrameReady: Bool { layer.isReadyForDisplay }
+
+    var volume: Float {
+        get { player.volume }
+        set { player.volume = newValue }
+    }
 
     func load(_ url: URL, preferences: PlaybackStreamPreferences) {
         clear()
